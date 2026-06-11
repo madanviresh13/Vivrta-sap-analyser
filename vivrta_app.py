@@ -630,8 +630,22 @@ _SKIP_WORDS = {
 
 
 def _extract_code_objects(code_text: str) -> set:
-    """Extract all uppercase SAP-style identifiers from ABAP source code."""
-    return set(_re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", code_text))
+    """
+    Extract all SAP-style identifiers from ABAP source, returned as uppercase.
+
+    Handles all real-world ABAP patterns:
+      Plain names:           bkpf / BKPF / Bkpf
+      Structure components:  gs_header-bukrs  -> BUKRS extracted
+      Field strings:         <ls_bseg>-belnr  -> BELNR extracted
+      Type references:       TYPE bseg-dmbtr  -> DMBTR extracted
+    """
+    # Normalise to uppercase so all variants match the same token
+    upper = code_text.upper()
+    # Standard word-boundary identifiers (3+ chars)
+    tokens = set(_re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", upper))
+    # Structure component access: anything after a hyphen  gs_header-BUKRS
+    tokens.update(_re.findall(r"-([A-Z][A-Z0-9_]{2,})\b", upper))
+    return tokens
 
 
 def _validate_report(report: str, code_objects: set) -> tuple:
@@ -661,20 +675,27 @@ def _validate_report(report: str, code_objects: set) -> tuple:
                 1,
             )
 
-    # Flag SAP object names in the report not grounded in the code
+    # Flag SAP object names in the report not grounded in the code.
+    # Both sets are uppercase so the comparison is case-insensitive.
+    # code_objects is built from the normalised (uppercased) source,
+    # so belnr, gt_bseg-belnr, and BELNR all produce "BELNR" in code_objects.
     report_objects = set(_re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b", report))
     for obj in sorted(report_objects):
-        if obj in code_objects:
+        if obj in code_objects:          # present in uploaded code -> fine
             continue
-        if obj in _SAP_KNOWN_TABLES:
+        if obj in _SAP_KNOWN_TABLES:    # known standard SAP table -> fine
             continue
-        if obj.startswith(_SAP_FM_PREFIXES):
+        if obj.startswith(_SAP_FM_PREFIXES):  # known FM/BAPI prefix -> fine
             continue
-        if obj in _SKIP_WORDS:
+        if obj in _SKIP_WORDS:          # English word or ABAP keyword -> skip
             continue
         if len(obj) < 4:
             continue
-        if obj.startswith(("Z", "Y")):
+        if obj.startswith(("Z", "Y")):  # custom Z/Y objects -> skip
+            continue
+        # Only flag if it looks like a genuine SAP object name:
+        # must be 4+ uppercase letters/digits, no spaces, typical SAP naming
+        if not _re.match(r"^[A-Z][A-Z0-9_]{3,}$", obj):
             continue
         warnings.append(
             f"SAP object '{obj}' appears in the report but not in the uploaded "
