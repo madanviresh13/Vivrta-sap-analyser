@@ -295,15 +295,37 @@ SAP FI, CO, SD, MM, FI-AA, and custom ABAP development.
 Analyse the uploaded SAP ABAP code and produce a structured report for a non-technical
 business audience (CFO, Finance Director, or Audit Committee).
 
-MASTER RULE — always distinguish between:
-  (a) What THIS CODE does — what the ABAP statements actually instruct SAP to do.
-  (b) What SAP's standard behaviour is — what SAP would normally do.
-Never conflate the two.
+ACCURACY RULES — read before writing a single word:
 
-CONFIDENCE INDICATORS — prefix every risk finding with:
-  [HIGH CONFIDENCE]        — clearly visible in the code, no ambiguity
-  [MEDIUM — VERIFY]        — visible but impact depends on config or template
-  [LOW — NEEDS CONTEXT]    — concern that cannot be confirmed from code alone
+RULE 1 — EVIDENCE FIRST: Every finding must be anchored to a visible code statement.
+  Identify the specific ABAP statement, field assignment, or value that supports it.
+  If you cannot point to it, do not state it as a finding.
+
+RULE 2 — FOUR CONFIDENCE TIERS (use exactly one per finding):
+  [HIGH CONFIDENCE]         — directly visible in code; quote the evidence inline
+  [MEDIUM — VERIFY]         — visible but impact depends on config or template
+  [LOW — NEEDS CONTEXT]     — general SAP concern, not confirmable from code alone
+  [INFERRED — NOT IN CODE]  — SAP best-practice note, not specific to this code;
+                              label it clearly so the reader knows
+
+RULE 3 — NEVER INVENT SAP OBJECT NAMES: Do not state a SAP Note number,
+  transaction code, FM name, BAPI name, table name, or field name unless it
+  appears in the uploaded code. If a standard replacement is relevant but you
+  are not 100% certain of the exact name, write:
+  "SAP provides a standard replacement — verify in official documentation."
+
+RULE 4 — SEPARATE CODE FROM SAP STANDARD: Always distinguish:
+  (a) What THIS CODE does — observable from ABAP statements
+  (b) What SAP standard behaviour would be — general SAP knowledge
+
+RULE 5 — HIGH CONFIDENCE MUST QUOTE EVIDENCE: Every [HIGH CONFIDENCE] finding
+  must include a line: Evidence: `exact code construct` (e.g. the actual field
+  assignment, hard-coded value, or statement). If you cannot provide this,
+  downgrade to [MEDIUM — VERIFY].
+
+RULE 6 — DO NOT SPECULATE ON INTENT: If code does something unusual, report
+  what the code does and flag it as a potential issue. Do not assert it is
+  definitely wrong — recommend the customer verify against their template.
 
 OUTPUT STRUCTURE — follow exactly:
 
@@ -361,8 +383,14 @@ MASTER RULES:
    cross-object intelligence, not just repeating individual program analyses.
 3. Where a file type is provided as a label (e.g. "TABLE DEFINITION: ZTAB_ASSETS"),
    treat it accordingly — a table definition enriches the analysis of programs that use it.
-4. Confidence indicators on all risk findings:
-   [HIGH CONFIDENCE] / [MEDIUM — VERIFY] / [LOW — NEEDS CONTEXT]
+4. Confidence indicators — use exactly one per finding:
+   [HIGH CONFIDENCE]         — directly visible in code; include Evidence: `quote`
+   [MEDIUM — VERIFY]         — visible but impact depends on config or data
+   [LOW — NEEDS CONTEXT]     — general concern, cannot be confirmed from code alone
+   [INFERRED — NOT IN CODE]  — SAP best practice, not specific to this code
+5. NEVER invent SAP object names, Note numbers, or transaction codes.
+   If uncertain of an exact name, write "verify in SAP official documentation".
+6. Every [HIGH CONFIDENCE] finding must include: Evidence: `exact code pattern`
 
 OUTPUT STRUCTURE — follow exactly:
 
@@ -496,6 +524,18 @@ A sprint-ready plan ordered by: Blockers first, then by business risk.
 Total estimated days for full remediation.
 Note any assumptions (e.g. "assumes experienced ABAP developer familiar with the codebase").
 
+ACCURACY RULES FOR THIS ASSESSMENT:
+- Only flag RED or AMBER if you can quote the specific code construct.
+  Include: Evidence: `exact statement or field reference`
+- Never state a SAP Note number unless you are certain it is correct.
+  Write "verify in SAP simplification item catalogue" instead.
+- Never assert a function module "does not exist in S/4HANA" unless it is in
+  the deprecated list above or shows a clearly incompatible pattern.
+  Mark uncertain FM deprecations AMBER, not RED.
+- For RED findings, state a replacement API only if you are certain.
+  If uncertain: "SAP provides a replacement — confirm in the simplification
+  item catalogue for your specific S/4HANA release."
+
 TONE: Precise, technical, actionable. This report will be presented to both the
 ABAP development team (who need exact fixes) and the project steering committee
 (who need business risk and timeline). Write for both audiences simultaneously.
@@ -539,117 +579,295 @@ def extract_text_from_file(uploaded_file) -> tuple[str, str]:
     return text, "text"
 
 
-# ── API call: Single Program ───────────────────────────────────────────────────
-def analyse_single(code_text: str) -> str:
-    """Analyse one ABAP program."""
+# ── Accuracy layer ────────────────────────────────────────────────────────────
+#
+# Three components run on every report before it reaches the user:
+#   1. _extract_code_objects  — pulls every SAP identifier from the uploaded code
+#   2. _validate_report       — flags report object names not in code or whitelist
+#   3. _self_review_pass      — second API call reviews the draft for accuracy issues
+#   4. _get_client            — shared authenticated Anthropic client factory
+
+import re as _re
+
+# Known SAP standard tables (most-referenced subset — expands over time)
+_SAP_KNOWN_TABLES = {
+    # FI
+    "BKPF","BSEG","BSID","BSAD","BSIK","BSAK","BSIS","BSAS","BSIP",
+    "SKA1","SKB1","SKAT","T001","T003","T004","T007A","T007S",
+    # FI-AA
+    "ANLA","ANLB","ANLC","ANLT","ANLZ","ANLP","ANEK","ANEP",
+    # CO
+    "COSP","COSS","COBK","COEJ","COEP","COST","CSKS","CSKT",
+    # SD
+    "VBAK","VBAP","VBEP","VBFA","VBKD","LIKP","LIPS","VBRK","VBRP",
+    # MM
+    "MARA","MARC","MARD","MAKT","EKKO","EKPO","MSEG","MKPF","MBEW",
+    # HR
+    "PA0001","PA0002","PA0007","PA0008","T500P","T001P",
+    # Basis
+    "USR02","USR04","AGR_USERS","TOBJ","TOBJT",
+}
+
+# Known SAP FM/BAPI name prefixes — objects starting with these are not flagged
+_SAP_FM_PREFIXES = (
+    "BAPI_","ALSM_","HR_","SD_","MM_","FI_","CO_","CONVERSION_",
+    "POPUP_","AUTHORITY_","F4_","RFC_","REUSE_","FINS_",
+)
+
+# Words that look like SAP names but are not — skip them
+_SKIP_WORDS = {
+    "HIGH","MEDIUM","VERIFY","CONTEXT","INFERRED","CONFIDENCE","NOTE",
+    "TRUE","FALSE","NULL","SELECT","WHERE","FROM","INTO","TABLE","TYPE",
+    "ABAP","HANA","DATA","LIKE","FORM","MOVE","READ","LOOP","ENDLOOP",
+    "CALL","FUNCTION","PERFORM","MODULE","REPORT","WRITE","MODIFY",
+    "DELETE","INSERT","UPDATE","COMMIT","ROLLBACK","CHECK","CLEAR",
+    "APPEND","SORT","SUBMIT","LEAVE","EXIT","CREATE","OBJECT","METHOD",
+    "BEGIN","END","BLOCK","SCREEN","SECTION","AUTHORITY","RAISE","CATCH",
+    "NOTE","FIORI","CLOUD","REST","ODATA","JSON","HTTP","HTTPS","XML",
+    "RFC","IDOC","ALE","EDI","BADI","RISK","NONE","PASS","FAIL","RED",
+    "AMBER","GREEN","SPRINT","OWNER","TASK","EFFORT","PROGRAM","FIND",
+}
+
+
+def _extract_code_objects(code_text: str) -> set:
+    """Extract all uppercase SAP-style identifiers from ABAP source code."""
+    return set(_re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", code_text))
+
+
+def _validate_report(report: str, code_objects: set) -> tuple:
+    """
+    Scan the report for:
+      - SAP Note references that are not valid integers (4-7 digits)
+      - SAP object names that appear in the report but not in the uploaded code
+        and are not in the known-tables whitelist
+
+    Returns (annotated_report, list_of_warnings).
+    """
+    warnings = []
+    annotated = report
+
+    # Validate SAP Note numbers — must be 4-7 digit integers
+    for match in _re.finditer(r"SAP\s+Note\s+([^\s,\.;]+)", report, _re.IGNORECASE):
+        note_ref = match.group(1)
+        if not _re.match(r"^\d{4,7}$", note_ref):
+            warn = (
+                f"Suspect SAP Note reference: '{match.group(0)}' "
+                f"— Note numbers must be 4-7 digit integers only"
+            )
+            warnings.append(warn)
+            annotated = annotated.replace(
+                match.group(0),
+                match.group(0) + " [⚠ VERIFY — Note reference format may be incorrect]",
+                1,
+            )
+
+    # Flag SAP object names in the report not grounded in the code
+    report_objects = set(_re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b", report))
+    for obj in sorted(report_objects):
+        if obj in code_objects:
+            continue
+        if obj in _SAP_KNOWN_TABLES:
+            continue
+        if obj.startswith(_SAP_FM_PREFIXES):
+            continue
+        if obj in _SKIP_WORDS:
+            continue
+        if len(obj) < 4:
+            continue
+        if obj.startswith(("Z", "Y")):
+            continue
+        warnings.append(
+            f"SAP object '{obj}' appears in the report but not in the uploaded "
+            f"code — verify this name is correct"
+        )
+
+    return annotated, warnings
+
+
+SYSTEM_PROMPT_REVIEWER = (
+    "You are a senior SAP quality assurance reviewer checking an AI-generated "
+    "SAP code analysis report for accuracy before it reaches a customer.\n\n"
+    "Your job is to identify and correct:\n"
+    "1. SAP object names (tables, FMs, BAPIs, transaction codes, field names) "
+    "that do not appear in the uploaded code and may be hallucinated\n"
+    "2. SAP Note numbers that are not valid integers (4-7 digits)\n"
+    "3. [HIGH CONFIDENCE] findings that lack a quoted Evidence line\n"
+    "4. Statements that conflate what the code does with SAP standard behaviour\n"
+    "5. Statements that say a BAPI 'ensures', 'guarantees', or 'enforces' authorisations\n"
+    "6. Overstatements — claiming something is definitely wrong when it is only "
+    "possibly wrong given what can be seen in the code\n\n"
+    "For each issue found, output:\n"
+    "ISSUE [N]: [brief description]\n"
+    "LOCATION: [quote the problematic sentence]\n"
+    "CORRECTION: [corrected version, or REMOVE if the statement should be deleted]\n\n"
+    "If no issues are found, output exactly: REVIEW PASSED — no accuracy issues detected.\n\n"
+    "Be thorough but do not manufacture issues. Leave accurate, well-evidenced "
+    "statements alone. The goal is accuracy, not excessive caution."
+)
+
+
+def _self_review_pass(client, report: str, code_context: str) -> tuple:
+    """
+    Send the draft report and original code to a reviewer model.
+    Returns (review_notes, cleaned_report).
+    If the reviewer finds issues, a correction pass applies them.
+    """
+    review_msg = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=2048,
+        system=SYSTEM_PROMPT_REVIEWER,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Please review the following SAP analysis report for accuracy.\n\n"
+                "=== UPLOADED CODE ===\n"
+                + code_context[:30_000]
+                + "\n\n=== DRAFT REPORT ===\n"
+                + report
+            ),
+        }],
+    )
+    review_notes = review_msg.content[0].text
+
+    if "REVIEW PASSED" in review_notes:
+        return review_notes, report
+
+    # Apply corrections
+    correction_msg = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=5000,
+        system=(
+            "You are correcting an SAP analysis report based on reviewer feedback. "
+            "Apply every CORRECTION listed in the review notes to the report. "
+            "Where the correction says REMOVE, delete that sentence. "
+            "Output only the complete corrected report — no preamble, no explanation."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                "=== REVIEW NOTES ===\n"
+                + review_notes
+                + "\n\n=== ORIGINAL REPORT ===\n"
+                + report
+            ),
+        }],
+    )
+    return review_notes, correction_msg.content[0].text
+
+
+def _get_client():
+    """Return an authenticated Anthropic client."""
     try:
         api_key = st.secrets["ANTHROPIC_API_KEY"]
     except KeyError:
         raise EnvironmentError(
             "ANTHROPIC_API_KEY not found in Streamlit secrets. "
             "Create .streamlit/secrets.toml and add:\n"
-            '    ANTHROPIC_API_KEY = "sk-ant-your-key-here"'
+            "    ANTHROPIC_API_KEY = \"sk-ant-your-key-here\""
         )
-    client  = anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key)
+
+
+# ── API call: Single Program ───────────────────────────────────────────────────
+def analyse_single(code_text: str) -> str:
+    """Analyse one ABAP program with self-review and output validation."""
+    client = _get_client()
+
+    # Pass 1 — initial analysis
     message = client.messages.create(
-        model      = "claude-opus-4-5",
-        max_tokens = 4096,
-        system     = SYSTEM_PROMPT_SINGLE,
-        messages   = [{
+        model="claude-opus-4-5",
+        max_tokens=4096,
+        system=SYSTEM_PROMPT_SINGLE,
+        messages=[{
             "role": "user",
             "content": (
                 "Please analyse the following SAP ABAP code and produce the "
                 "structured report described in your instructions.\n\n"
-                f"```abap\n{code_text}\n```"
+                "```abap\n" + code_text + "\n```"
             ),
         }],
     )
-    return message.content[0].text
+    draft = message.content[0].text
+
+    # Pass 2 — self-review and correction
+    _, cleaned = _self_review_pass(client, draft, code_text)
+
+    # Pass 3 — output validation
+    code_objects = _extract_code_objects(code_text)
+    validated, warnings = _validate_report(cleaned, code_objects)
+
+    if warnings:
+        warning_lines = "\n".join(f"- {w}" for w in warnings[:10])
+        validated += (
+            "\n\n---\n"
+            "**⚠ Accuracy Review Notes** "
+            "*(for analyst review before sharing with client)*\n"
+            + warning_lines
+        )
+
+    return validated
 
 
 # ── API call: Repository Bundle ────────────────────────────────────────────────
-def analyse_bundle(files: list[dict]) -> str:
-    """
-    Analyse multiple SAP objects together.
-    files: list of {"name": str, "type": str, "label": str, "content": str}
-    """
-    try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-    except KeyError:
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY not found in Streamlit secrets."
-        )
-
-    # Build a rich context block — each file clearly separated and labelled
-    parts = []
+def analyse_bundle(files: list) -> str:
+    """Analyse multiple SAP objects with self-review."""
+    client = _get_client()
+    parts  = []
     for i, f in enumerate(files, 1):
         label   = f["label"] or f["type"].upper()
-        header  = f"=== OBJECT {i}: {f['name']} [{label}] ==="
         content = f["content"]
-        # Truncate very large files to stay within context
         if len(content) > 40_000:
             content = content[:40_000] + "\n\n[... truncated to 40,000 characters ...]"
-        parts.append(f"{header}\n{content}")
-
+        parts.append(f"=== OBJECT {i}: {f['name']} [{label}] ===\n{content}")
     combined = "\n\n".join(parts)
 
-    client  = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model      = "claude-opus-4-5",
-        max_tokens = 8192,
-        system     = SYSTEM_PROMPT_BUNDLE,
-        messages   = [{
+        model="claude-opus-4-5",
+        max_tokens=8192,
+        system=SYSTEM_PROMPT_BUNDLE,
+        messages=[{
             "role": "user",
             "content": (
                 f"I have uploaded {len(files)} SAP objects from our custom code estate. "
-                "Please produce the full estate analysis report as described in your instructions.\n\n"
-                f"{combined}"
+                "Please produce the full estate analysis report as described.\n\n"
+                + combined
             ),
         }],
     )
-    return message.content[0].text
+    draft = message.content[0].text
+    _, cleaned = _self_review_pass(client, draft, combined[:30_000])
+    return cleaned
 
 
 # ── API call: S/4HANA Readiness ────────────────────────────────────────────────
-def analyse_s4hana(files: list[dict]) -> str:
-    """
-    S/4HANA readiness scan across one or more programs.
-    files: list of {"name": str, "type": str, "label": str, "content": str}
-    """
-    try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-    except KeyError:
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY not found in Streamlit secrets."
-        )
-
-    parts = []
+def analyse_s4hana(files: list) -> str:
+    """S/4HANA readiness scan with self-review."""
+    client = _get_client()
+    parts  = []
     for i, f in enumerate(files, 1):
         label   = f["label"] or f["type"].upper()
-        header  = f"=== PROGRAM {i}: {f['name']} [{label}] ==="
         content = f["content"]
         if len(content) > 40_000:
             content = content[:40_000] + "\n\n[... truncated ...]"
-        parts.append(f"{header}\n{content}")
-
+        parts.append(f"=== PROGRAM {i}: {f['name']} [{label}] ===\n{content}")
     combined = "\n\n".join(parts)
 
-    client  = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model      = "claude-opus-4-5",
-        max_tokens = 8192,
-        system     = SYSTEM_PROMPT_S4HANA,
-        messages   = [{
+        model="claude-opus-4-5",
+        max_tokens=8192,
+        system=SYSTEM_PROMPT_S4HANA,
+        messages=[{
             "role": "user",
             "content": (
                 f"Please perform an S/4HANA readiness assessment on the following "
-                f"{len(files)} SAP program(s). Produce the full readiness report "
-                "as described in your instructions.\n\n"
-                f"{combined}"
+                f"{len(files)} SAP program(s).\n\n" + combined
             ),
         }],
     )
-    return message.content[0].text
+    draft = message.content[0].text
+    _, cleaned = _self_review_pass(client, draft, combined[:30_000])
+    return cleaned
+
 
 
 # ── PDF engine ────────────────────────────────────────────────────────────────
