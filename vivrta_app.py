@@ -943,11 +943,134 @@ def analyse_single(code_text: str) -> str:
     return validated
 
 
+
+# ── Configuration injection ────────────────────────────────────────────────────
+def _extract_config_facts(files: list) -> str:
+    """
+    Scan uploaded files labelled as configuration data and extract verified
+    key-value facts to inject into the prompt as ground truth.
+
+    Handles: tab-delimited SE16/SM30 exports, CSV, pipe-delimited,
+    functional specifications, and transport logs.
+    Returns a formatted string ready to prepend to the API user message,
+    or an empty string if no config files are present.
+    """
+    CONFIG_LABELS = {
+        "Configuration Data (SE16/SM30)",
+        "Functional Specification",
+        "Transport Log",
+        "Org Structure / SPRO Export",
+    }
+
+    TRANSPORT_PREFIXES = (
+        "PROG", "FUNC", "TABD", "TOBJ", "DTEL", "DOMA", "VIEW",
+        "R3TR", "LIMU", "CLAS", "INTF", "ENQU", "AUTH",
+    )
+
+    facts = []
+
+    for f in files:
+        label   = f.get("label", "")
+        content = f["content"].strip()
+        name    = f["name"]
+
+        if label not in CONFIG_LABELS:
+            continue
+
+        if label == "Functional Specification":
+            snippet = content[:3000].replace("\n", " ").replace("\r", "")
+            facts.append(
+                f"FUNCTIONAL SPECIFICATION ({name}):\n{snippet}\n"
+                "[End of spec excerpt]"
+            )
+            continue
+
+        if label == "Transport Log":
+            lines = content.splitlines()
+            obj_lines = [
+                l.strip() for l in lines
+                if any(l.strip().startswith(p) for p in TRANSPORT_PREFIXES)
+            ]
+            if obj_lines:
+                facts.append(
+                    f"TRANSPORT LOG ({name}) — objects included:\n"
+                    + "\n".join(obj_lines[:50])
+                )
+            continue
+
+        # Tabular config file — detect delimiter
+        first_line = content.splitlines()[0] if content.splitlines() else ""
+        if "\t" in first_line:
+            delimiter = "\t"
+        elif "|" in first_line:
+            delimiter = "|"
+        elif ";" in first_line:
+            delimiter = ";"
+        elif "," in first_line:
+            delimiter = ","
+        else:
+            facts.append(
+                f"CONFIGURATION DATA ({name}):\n" + content[:2000]
+            )
+            continue
+
+        import csv as _csv, io as _io
+        try:
+            reader = _csv.reader(_io.StringIO(content), delimiter=delimiter)
+            rows   = [r for r in reader if any(c.strip() for c in r)]
+        except Exception:
+            facts.append(
+                f"CONFIGURATION DATA ({name}): [parse error — raw text]\n"
+                + content[:1000]
+            )
+            continue
+
+        if not rows:
+            continue
+
+        headers    = [h.strip().upper() for h in rows[0]]
+        table_name = name.replace(".txt", "").replace(".csv", "").upper()
+        fact_lines = [f"TABLE/CONFIG DATA: {table_name} ({name})"]
+
+        for row in rows[1:51]:
+            cells = [c.strip() for c in row]
+            if not any(cells):
+                continue
+            pairs = [
+                f"{h}={v}"
+                for h, v in zip(headers, cells)
+                if h and v
+            ]
+            if pairs:
+                fact_lines.append("  " + " | ".join(pairs))
+
+        if len(fact_lines) > 1:
+            facts.append("\n".join(fact_lines))
+
+    if not facts:
+        return ""
+
+    separator = "=" * 51
+    return (
+        f"\n\n{separator}\n"
+        "VERIFIED CUSTOMER CONFIGURATION DATA\n"
+        "The following facts come directly from this customer's\n"
+        "SAP system exports. Treat them as ground truth and do\n"
+        "NOT override them with general SAP default assumptions.\n"
+        f"{separator}\n\n"
+        + "\n\n".join(facts)
+        + f"\n{separator}\n"
+    )
+
 # ── API call: Repository Bundle ────────────────────────────────────────────────
 def analyse_bundle(files: list) -> str:
-    """Analyse multiple SAP objects with self-review."""
+    """Analyse multiple SAP objects with self-review and config injection."""
     client = _get_client()
-    parts  = []
+
+    # Extract verified config facts to inject as ground truth
+    config_facts = _extract_config_facts(files)
+
+    parts = []
     for i, f in enumerate(files, 1):
         label   = f["label"] or f["type"].upper()
         content = f["content"]
@@ -956,18 +1079,20 @@ def analyse_bundle(files: list) -> str:
         parts.append(f"=== OBJECT {i}: {f['name']} [{label}] ===\n{content}")
     combined = "\n\n".join(parts)
 
+    user_content = (
+        f"I have uploaded {len(files)} SAP objects from our custom code estate. "
+        "Please produce the full estate analysis report as described.\n\n"
+    )
+    if config_facts:
+        user_content += config_facts + "\n\n"
+        user_content += "=== SAP CODE OBJECTS FOR ANALYSIS ===\n\n"
+    user_content += combined
+
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=8192,
         system=SYSTEM_PROMPT_BUNDLE,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"I have uploaded {len(files)} SAP objects from our custom code estate. "
-                "Please produce the full estate analysis report as described.\n\n"
-                + combined
-            ),
-        }],
+        messages=[{"role": "user", "content": user_content}],
     )
     draft = message.content[0].text
     _, cleaned = _self_review_pass(client, draft, combined[:30_000])
@@ -976,9 +1101,13 @@ def analyse_bundle(files: list) -> str:
 
 # ── API call: S/4HANA Readiness ────────────────────────────────────────────────
 def analyse_s4hana(files: list) -> str:
-    """S/4HANA readiness scan with self-review."""
+    """S/4HANA readiness scan with self-review and config injection."""
     client = _get_client()
-    parts  = []
+
+    # Extract verified config facts — grounds the migration assessment
+    config_facts = _extract_config_facts(files)
+
+    parts = []
     for i, f in enumerate(files, 1):
         label   = f["label"] or f["type"].upper()
         content = f["content"]
@@ -987,17 +1116,20 @@ def analyse_s4hana(files: list) -> str:
         parts.append(f"=== PROGRAM {i}: {f['name']} [{label}] ===\n{content}")
     combined = "\n\n".join(parts)
 
+    user_content = (
+        f"Please perform an S/4HANA readiness assessment on the following "
+        f"{len(files)} SAP program(s).\n\n"
+    )
+    if config_facts:
+        user_content += config_facts + "\n\n"
+        user_content += "=== SAP PROGRAMS TO ASSESS ===\n\n"
+    user_content += combined
+
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=8192,
         system=SYSTEM_PROMPT_S4HANA,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Please perform an S/4HANA readiness assessment on the following "
-                f"{len(files)} SAP program(s).\n\n" + combined
-            ),
-        }],
+        messages=[{"role": "user", "content": user_content}],
     )
     draft = message.content[0].text
     _, cleaned = _self_review_pass(client, draft, combined[:30_000])
