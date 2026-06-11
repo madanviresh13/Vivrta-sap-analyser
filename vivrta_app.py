@@ -246,145 +246,408 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── System prompt ──────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """
+# ── Mode definitions ──────────────────────────────────────────────────────────
+MODES = {
+    "single":  "🔍  Single Program Analysis",
+    "bundle":  "📦  Repository Bundle Analysis",
+    "s4hana":  "🚀  S/4HANA Readiness Scan",
+}
+
+MODE_DESCRIPTIONS = {
+    "single": "Deep analysis of one ABAP program — business process, data flow, risk, and glossary.",
+    "bundle": "Upload 2–15 SAP objects together. Get individual summaries plus cross-program intelligence: shared tables, dependencies, naming compliance, and an estate overview.",
+    "s4hana": "Upload 1–15 programs. Every file is scored Red / Amber / Green against ~40 S/4HANA migration patterns with a prioritised remediation plan.",
+}
+
+MODE_SECTIONS = {
+    "single": [
+        "Business Process Summary",
+        "Key SAP Tables Identified",
+        "Data Flow",
+        "Business Risk & Observations",
+        "Plain-English SAP Glossary",
+    ],
+    "bundle": [
+        "Estate Executive Summary",
+        "Cross-Program Object Inventory",
+        "Shared Tables & Dependencies",
+        "Naming Convention & Quality Audit",
+        "Individual Program Summaries",
+        "Consolidated Risk Register",
+    ],
+    "s4hana": [
+        "S/4HANA Readiness Scorecard",
+        "Critical Blockers (Red)",
+        "Warnings Requiring Review (Amber)",
+        "Best-Practice Confirmations (Green)",
+        "Prioritised Remediation Plan",
+        "Estimated Migration Effort",
+    ],
+}
+
+ACCEPTED_TYPES = ["txt", "abap", "csv", "pdf"]
+
+# ── System prompt: Single Program ─────────────────────────────────────────────
+SYSTEM_PROMPT_SINGLE = """
 You are an expert SAP functional consultant and technical analyst with deep knowledge of
-SAP FI (Financial Accounting), CO (Controlling), SD (Sales & Distribution), MM (Materials Management),
-and custom ABAP development.
+SAP FI, CO, SD, MM, FI-AA, and custom ABAP development.
 
-Your task is to analyse custom SAP ABAP code uploaded by a user and produce a clear,
-structured explanation written for a non-technical business audience (e.g. a CFO or Finance Director).
+Analyse the uploaded SAP ABAP code and produce a structured report for a non-technical
+business audience (CFO, Finance Director, or Audit Committee).
 
-─────────────────────────────────────────────────────────────
-MASTER RULE — SEPARATE CODE BEHAVIOUR FROM SAP STANDARD BEHAVIOUR
-─────────────────────────────────────────────────────────────
-Throughout every section of your report, always clearly distinguish between:
+MASTER RULE — always distinguish between:
   (a) What THIS CODE does — what the ABAP statements actually instruct SAP to do.
-  (b) What SAP's standard behaviour is — what SAP would normally do in this scenario.
+  (b) What SAP's standard behaviour is — what SAP would normally do.
+Never conflate the two.
 
-Never conflate the two. If the code relies on SAP's standard logic to do something,
-say "SAP's standard logic handles X" — not "this program ensures X."
-This is the single most important rule in this prompt.
+CONFIDENCE INDICATORS — prefix every risk finding with:
+  [HIGH CONFIDENCE]        — clearly visible in the code, no ambiguity
+  [MEDIUM — VERIFY]        — visible but impact depends on config or template
+  [LOW — NEEDS CONTEXT]    — concern that cannot be confirmed from code alone
 
-─────────────────────────────────────────────────────────────
-CONFIDENCE INDICATORS — USE ON ALL RISK FINDINGS
-─────────────────────────────────────────────────────────────
-Every finding in the Business Risk & Observations section must be prefixed with one of:
-
-  [HIGH CONFIDENCE]   — Clearly visible in the code; no ambiguity.
-  [MEDIUM — VERIFY]   — Visible in the code but the impact depends on context outside the
-                        code (e.g. the spreadsheet template, system config, or customer setup).
-  [LOW — NEEDS CONTEXT] — A potential concern that cannot be confirmed without additional
-                          information (e.g. how the program is called, authorisation role design).
-
-─────────────────────────────────────────────────────────────
-OUTPUT STRUCTURE — FOLLOW EXACTLY
-─────────────────────────────────────────────────────────────
+OUTPUT STRUCTURE — follow exactly:
 
 ## Business Process Summary
-In 2–4 sentences, explain in plain English what this code does as a business process.
-Avoid jargon. Describe the "what" and "why", not the "how".
-
-Accuracy rules:
-- If the code calls a BAPI, state that it submits data through SAP's standard posting
-  interface. Use language like "relies on", "passes through", or "submits via" —
-  never "ensures", "guarantees", or "enforces" when describing what the BAPI provides.
-- Do not claim the BAPI automatically enforces all authorisations. SAP's role-based
-  access controls are what govern user permissions; the BAPI is a posting mechanism, not
-  a security layer in itself.
-- Be precise about integration depth. If the code submits financial postings that
-  reference asset data but does not call a dedicated asset BAPI (e.g.
-  BAPI_ASSET_ACQUISITION_POST), describe it as a financial posting with asset references —
-  not as a full FI-AA asset accounting integration.
+2–4 sentences. Plain English. What and why, not how.
+Never claim a BAPI "ensures" or "guarantees" authorisations — it is a posting mechanism.
+Be precise about integration depth (generic BAPI ≠ full sub-ledger integration).
 
 ## Key SAP Tables Identified
-List every SAP table referenced in the code. For each table provide:
-- Table name
-- SAP module
-- One-line description of what data it holds
-
-If no standard SAP tables are found, say so clearly.
+For each table: name, module, one-line description.
+Note if tables are referenced in comments only vs actually used in code.
 
 ## Data Flow
-Describe in numbered steps how data moves through the program — where it starts,
-what it selects or updates, and where the output goes.
-
-Accuracy rules:
-- If the code hard-codes a document type value (e.g. 'AA', 'SA', 'KR'), state that the
-  code passes that specific value to SAP. Do NOT assert what it universally means —
-  document types are configurable per client in transaction OBA7 and may differ between
-  implementations.
-- For each data-mapping step (e.g. field A in the spreadsheet mapped to field B in the
-  BAPI structure), note the mapping as observed in the code. If a mapping looks unusual
-  or potentially mismatched, flag it in the Risk section with the appropriate confidence
-  indicator — do not assume it is a defect unless it is unambiguously wrong.
+Numbered steps. Where data starts, what is mapped/transformed, where it ends.
+Flag any field mapping where source and destination types look mismatched.
+Note hard-coded values (currency, document type, company code) as observed facts.
 
 ## Business Risk & Observations
-Prefix every finding with a confidence indicator (see above). Investigate and report on:
+Prefix every finding with a confidence indicator. Investigate:
+- Direct DB writes (INSERT, UPDATE, MODIFY) to financial tables
+- Missing AUTHORITY-CHECK statements in custom code
+- Hard-coded values: currencies, company codes, fiscal years, date literals
+- Bypasses of standard SAP posting logic
+- Performance risks on large datasets
+- Data-mapping mismatches
+- Generic BAPI used where a specific one is the standard approach
+- Capitalisation dates, vendor references, or other fields parsed but never used
 
-- Direct database writes (INSERT, UPDATE, MODIFY) to financial tables
-- Missing explicit AUTHORITY-CHECK statements in the custom code
-  (note separately that BAPIs apply SAP's standard role-based checks, but the absence
-  of explicit checks in the custom code itself is still worth flagging)
-- Hard-coded values: currency keys, company codes, fiscal years, or date literals
-- Logic that bypasses standard SAP posting (e.g. direct manipulation of BKPF/BSEG)
-- Performance concerns on large financial datasets
-- Data-mapping observations: flag any field assignment where the source value does not
-  clearly match the destination field's expected content — but qualify these as
-  [MEDIUM — VERIFY] or [LOW — NEEDS CONTEXT] unless the mismatch is unambiguous,
-  and always note that confirmation requires sight of the actual input spreadsheet template
-- Integration gaps: note where a generic BAPI is used where a more specific one would
-  be the standard approach
-
-Security summary rule:
-- Do NOT write "No Critical Security Violations Found" or any similarly conclusive statement.
-- Instead, if no direct table writes or obvious bypasses were found, write exactly:
-  "No obvious direct-table-write bypass or major security issue was detected in this code.
-  This does not constitute a full security or controls review."
-- Always close this section with: "A qualified SAP consultant or auditor should review
-  this program before it is used in a production environment."
+Security summary (use exact wording):
+"No obvious direct-table-write bypass or major security issue was detected in this code.
+This does not constitute a full security or controls review."
+Close with: "A qualified SAP consultant or auditor should review this program before
+it is used in a production environment."
 
 ## Plain-English Glossary
-Define any SAP-specific terms used above that a non-SAP reader would not know.
-One sentence per term.
+One sentence per SAP term used above. Write for a Finance Director with no SAP background.
 
-─────────────────────────────────────────────────────────────
-TONE
-─────────────────────────────────────────────────────────────
-Professional, measured, and precise. You are briefing a Finance Director who will use
-this report to decide whether to approve, query, or escalate a code change.
-Prefer accuracy over reassurance. Flag uncertainty clearly rather than papering over it.
-Never overstate what you can confirm from the code alone.
+TONE: Professional, measured, precise. Prefer accuracy over reassurance.
 """.strip()
 
-# ── Anthropic API call ─────────────────────────────────────────────────────────
-def analyse_sap_code(code_text: str) -> str:
-    """Send ABAP code to Claude and return the analysis."""
+
+# ── System prompt: Repository Bundle ──────────────────────────────────────────
+SYSTEM_PROMPT_BUNDLE = """
+You are a senior SAP technical architect conducting a code estate review.
+You have received multiple SAP objects from one customer system. These may include
+ABAP programs, function modules, table definitions, configuration exports, transport logs,
+functional specifications, or org structure data.
+
+Your task is to produce a comprehensive estate analysis report structured for both a
+technical audience (SAP basis/ABAP team) and a business audience (Finance Director, CIO).
+
+MASTER RULES:
+1. Always distinguish between what the CODE does vs what SAP's standard behaviour is.
+2. Consider each file in context of the others — the value of this analysis is the
+   cross-object intelligence, not just repeating individual program analyses.
+3. Where a file type is provided as a label (e.g. "TABLE DEFINITION: ZTAB_ASSETS"),
+   treat it accordingly — a table definition enriches the analysis of programs that use it.
+4. Confidence indicators on all risk findings:
+   [HIGH CONFIDENCE] / [MEDIUM — VERIFY] / [LOW — NEEDS CONTEXT]
+
+OUTPUT STRUCTURE — follow exactly:
+
+## Estate Executive Summary
+3–5 sentences. What is this code estate? What business processes does it support?
+What is the overall quality and risk posture? Written for a CIO or Finance Director.
+Include: number of objects analysed, primary SAP modules touched, overall risk rating
+(Low / Medium / High / Critical) with one-sentence justification.
+
+## Object Inventory
+A table listing every uploaded object with: Object Name | Type | SAP Module | Purpose (one line).
+If the type was labelled by the user, use that label. Otherwise infer from content.
+
+## Cross-Program Dependencies
+Identify shared tables, shared function modules, and shared data structures.
+For each shared object: which programs use it, in what way (read/write/call),
+and what the dependency risk is if it changes.
+Format as: SHARED OBJECT → used by [Program A (read), Program B (write)] → Risk: [High/Med/Low]
+
+## Naming Convention & Code Quality Audit
+Assess: naming convention compliance (Z/Y prefix, consistent naming patterns),
+commenting standards, use of obsolete statements, hardcoded values across the estate,
+duplicate logic that could be centralised. Give an overall quality grade A–F with justification.
+
+## Individual Program Summaries
+For each ABAP program or function module uploaded, provide a concise summary:
+### [Program Name]
+- **Purpose:** one sentence
+- **Tables accessed:** list
+- **Key BAPIs/FMs called:** list
+- **Top risk finding:** one sentence with confidence indicator
+- **Lines of code (approximate):** estimate
+
+## Consolidated Risk Register
+A prioritised table of all findings across all programs:
+| Priority | Finding | Affected Objects | Confidence | Recommended Action |
+Order by: Critical → High → Medium → Low.
+Do not repeat findings — consolidate similar issues across programs into one row.
+
+## Estate Improvement Recommendations
+Top 5 actionable recommendations for the development team, ordered by business impact.
+Each recommendation: what to do, why it matters, estimated effort (hours/days).
+
+TONE: Senior consultant report. Executive summary is business-facing.
+Technical sections are precise and actionable for the ABAP development team.
+""".strip()
+
+
+# ── System prompt: S/4HANA Readiness ─────────────────────────────────────────
+SYSTEM_PROMPT_S4HANA = """
+You are an SAP S/4HANA migration specialist with deep expertise in ABAP compatibility
+assessment, simplification item analysis, and custom code remediation planning.
+
+You have received one or more ABAP programs (and optionally supporting objects) from a
+customer running SAP ECC. Your task is to assess each program's compatibility with
+SAP S/4HANA and produce a migration readiness report.
+
+ASSESSMENT FRAMEWORK — check every program against these pattern categories:
+
+CATEGORY 1 — DATABASE & TABLE ACCESS (Critical for HANA migration)
+- SELECT * on tables that no longer exist in S/4HANA (BSEG now a compatibility view, etc.)
+- Access to pool/cluster tables (BSEG, RFBLG, PCL1-4, BSIS, BSAS, BSID, BSAD, BSIK, BSAK)
+- SELECT without explicit field list (performance anti-pattern on HANA column store)
+- ORDER BY on non-indexed fields
+- NOT IN / NOT EXISTS patterns that perform poorly on HANA
+- Direct access to tables replaced by CDS views in S/4HANA
+
+CATEGORY 2 — OBSOLETE FUNCTION MODULES & BAPIS
+- FMs deprecated in S/4HANA (SD_SALESDOCUMENT_*, BAPI_GOODSMVT_CREATE replacements, etc.)
+- Posting FMs that bypass new S/4HANA journal entry model (BKPF/BSEG direct manipulation)
+- HR function modules replaced by HCM services
+- FMs that call obsolete ABAP statements internally
+
+CATEGORY 3 — ABAP LANGUAGE COMPATIBILITY
+- MOVE-CORRESPONDING on structures that changed in S/4HANA
+- Field symbol assignments to obsolete structure components
+- CALL TRANSACTION bypassing S/4HANA authorisation model
+- SUBMIT with obsolete program names
+- Dynamic SELECT with obsolete table names as strings
+- WRITE TO obsolete fields
+
+CATEGORY 4 — BUSINESS LOGIC COMPATIBILITY
+- Hard-coded company codes that may differ in S/4HANA system
+- Currency logic that doesn't account for parallel currencies in S/4HANA
+- Fiscal year logic that conflicts with S/4HANA universal journal
+- Asset accounting logic incompatible with new FI-AA in S/4HANA (parallel valuation)
+- CO-PA logic incompatible with S/4HANA margin analysis
+
+CATEGORY 5 — ARCHITECTURAL PATTERNS
+- BAPIs replaced by dedicated S/4HANA APIs (e.g. use BAPI_ACC_DOCUMENT_POST → FINS_ACDOC_POST)
+- Screen-based (dynpro) programs that should be Fiori-enabled
+- RFC calls that won't work in embedded deployment model
+- Batch programs that need review for real-time HANA processing
+
+SCORING — for each finding assign:
+  🔴 RED    — Blocker. Will cause errors or incorrect results in S/4HANA. Must fix before go-live.
+  🟡 AMBER  — Warning. May work but is a risk or best-practice violation. Should fix.
+  🟢 GREEN  — Compatible. Follows S/4HANA best practices. No action needed.
+
+OUTPUT STRUCTURE — follow exactly:
+
+## S/4HANA Readiness Scorecard
+A summary table:
+| Program | Red Findings | Amber Findings | Green Findings | Readiness Rating |
+Readiness Rating: Not Ready / Needs Work / Minor Changes / Ready
+
+Overall Estate Rating: [Not Ready / Needs Work / Minor Changes / Ready]
+One paragraph explaining the overall rating.
+
+## 🔴 Critical Blockers
+For each RED finding across all programs:
+**[Finding Title]** — Affected program(s): X
+- What the code does: (specific line/pattern observed)
+- Why it breaks in S/4HANA: (precise technical reason)
+- Required fix: (specific ABAP change or replacement API)
+- Estimated fix effort: (hours)
+
+## 🟡 Warnings Requiring Review
+For each AMBER finding, same format as above but shorter.
+
+## 🟢 S/4HANA Compatible Patterns
+List the things this code does WELL that are already S/4HANA compatible.
+This section builds confidence and avoids over-remediation.
+
+## Prioritised Remediation Plan
+A sprint-ready plan ordered by: Blockers first, then by business risk.
+| Sprint | Task | Program | Effort | Owner (Basis/ABAP/Functional) |
+
+## Estimated Migration Effort Summary
+| Category | Red Items | Amber Items | Estimated Days |
+Total estimated days for full remediation.
+Note any assumptions (e.g. "assumes experienced ABAP developer familiar with the codebase").
+
+TONE: Precise, technical, actionable. This report will be presented to both the
+ABAP development team (who need exact fixes) and the project steering committee
+(who need business risk and timeline). Write for both audiences simultaneously.
+""".strip()
+
+
+# ── PDF text extraction helper ─────────────────────────────────────────────────
+def extract_text_from_file(uploaded_file) -> tuple[str, str]:
+    """
+    Extract text from an uploaded file.
+    Returns (text_content, detected_type) where detected_type is
+    one of: 'abap', 'text', 'csv', 'pdf'.
+    """
+    name = uploaded_file.name.lower()
+    raw  = uploaded_file.read()
+
+    if name.endswith('.pdf'):
+        try:
+            import io
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(raw))
+            text = "\n\n".join(
+                page.extract_text() or "" for page in reader.pages
+            ).strip()
+        except Exception:
+            try:
+                text = raw.decode("utf-8", errors="replace")
+            except Exception:
+                text = "[PDF could not be read]"
+        return text, "pdf"
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    if name.endswith(('.abap',)):
+        return text, "abap"
+    if name.endswith('.csv'):
+        return text, "csv"
+    return text, "text"
+
+
+# ── API call: Single Program ───────────────────────────────────────────────────
+def analyse_single(code_text: str) -> str:
+    """Analyse one ABAP program."""
     try:
         api_key = st.secrets["ANTHROPIC_API_KEY"]
     except KeyError:
         raise EnvironmentError(
             "ANTHROPIC_API_KEY not found in Streamlit secrets. "
-            "Create the file .streamlit/secrets.toml in your project folder and add:\n\n"
+            "Create .streamlit/secrets.toml and add:\n"
             '    ANTHROPIC_API_KEY = "sk-ant-your-key-here"'
         )
-
-    client = anthropic.Anthropic(api_key=api_key)
-
+    client  = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "Please analyse the following SAP ABAP code and produce the "
-                    "structured report described in your instructions.\n\n"
-                    f"```abap\n{code_text}\n```"
-                ),
-            }
-        ],
+        model      = "claude-opus-4-5",
+        max_tokens = 4096,
+        system     = SYSTEM_PROMPT_SINGLE,
+        messages   = [{
+            "role": "user",
+            "content": (
+                "Please analyse the following SAP ABAP code and produce the "
+                "structured report described in your instructions.\n\n"
+                f"```abap\n{code_text}\n```"
+            ),
+        }],
+    )
+    return message.content[0].text
+
+
+# ── API call: Repository Bundle ────────────────────────────────────────────────
+def analyse_bundle(files: list[dict]) -> str:
+    """
+    Analyse multiple SAP objects together.
+    files: list of {"name": str, "type": str, "label": str, "content": str}
+    """
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except KeyError:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY not found in Streamlit secrets."
+        )
+
+    # Build a rich context block — each file clearly separated and labelled
+    parts = []
+    for i, f in enumerate(files, 1):
+        label   = f["label"] or f["type"].upper()
+        header  = f"=== OBJECT {i}: {f['name']} [{label}] ==="
+        content = f["content"]
+        # Truncate very large files to stay within context
+        if len(content) > 40_000:
+            content = content[:40_000] + "\n\n[... truncated to 40,000 characters ...]"
+        parts.append(f"{header}\n{content}")
+
+    combined = "\n\n".join(parts)
+
+    client  = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model      = "claude-opus-4-5",
+        max_tokens = 8192,
+        system     = SYSTEM_PROMPT_BUNDLE,
+        messages   = [{
+            "role": "user",
+            "content": (
+                f"I have uploaded {len(files)} SAP objects from our custom code estate. "
+                "Please produce the full estate analysis report as described in your instructions.\n\n"
+                f"{combined}"
+            ),
+        }],
+    )
+    return message.content[0].text
+
+
+# ── API call: S/4HANA Readiness ────────────────────────────────────────────────
+def analyse_s4hana(files: list[dict]) -> str:
+    """
+    S/4HANA readiness scan across one or more programs.
+    files: list of {"name": str, "type": str, "label": str, "content": str}
+    """
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except KeyError:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY not found in Streamlit secrets."
+        )
+
+    parts = []
+    for i, f in enumerate(files, 1):
+        label   = f["label"] or f["type"].upper()
+        header  = f"=== PROGRAM {i}: {f['name']} [{label}] ==="
+        content = f["content"]
+        if len(content) > 40_000:
+            content = content[:40_000] + "\n\n[... truncated ...]"
+        parts.append(f"{header}\n{content}")
+
+    combined = "\n\n".join(parts)
+
+    client  = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model      = "claude-opus-4-5",
+        max_tokens = 8192,
+        system     = SYSTEM_PROMPT_S4HANA,
+        messages   = [{
+            "role": "user",
+            "content": (
+                f"Please perform an S/4HANA readiness assessment on the following "
+                f"{len(files)} SAP program(s). Produce the full readiness report "
+                "as described in your instructions.\n\n"
+                f"{combined}"
+            ),
+        }],
     )
     return message.content[0].text
 
@@ -1041,35 +1304,32 @@ with st.sidebar:
     </div>
 
     <div class="sb-sec">
-        <div class="sb-sec-title">What it analyses</div>
-        <div class="sb-row"><span class="sb-icon">📋</span>Business process in plain English</div>
-        <div class="sb-row"><span class="sb-icon">🗄️</span>Key SAP tables &amp; modules</div>
-        <div class="sb-row"><span class="sb-icon">🔀</span>Data flow step-by-step</div>
-        <div class="sb-row"><span class="sb-icon">⚠️</span>Risk flags with confidence levels</div>
-        <div class="sb-row"><span class="sb-icon">🔒</span>Security &amp; authorisation notes</div>
-        <div class="sb-row"><span class="sb-icon">📖</span>Plain-English SAP glossary</div>
+        <div class="sb-sec-title">Analysis modes</div>
+        <div class="sb-row"><span class="sb-icon">🔍</span><div><strong style="color:#c7d2fe">Single Program</strong><br>Deep-dive one ABAP file</div></div>
+        <div class="sb-row"><span class="sb-icon">📦</span><div><strong style="color:#c7d2fe">Repository Bundle</strong><br>Cross-program estate intelligence</div></div>
+        <div class="sb-row"><span class="sb-icon">🚀</span><div><strong style="color:#c7d2fe">S/4HANA Readiness</strong><br>Migration risk scorecard</div></div>
+    </div>
+
+    <hr class="sb-divider"/>
+
+    <div class="sb-sec">
+        <div class="sb-sec-title">Accepted file types</div>
+        <div class="sb-row"><span class="sb-icon">📄</span>ABAP source (.abap, .txt)</div>
+        <div class="sb-row"><span class="sb-icon">🗂️</span>Table definitions (.txt)</div>
+        <div class="sb-row"><span class="sb-icon">📊</span>Config / SE16 exports (.csv)</div>
+        <div class="sb-row"><span class="sb-icon">📋</span>Functional specs (.pdf, .txt)</div>
+        <div class="sb-row"><span class="sb-icon">🚢</span>Transport logs (.txt)</div>
     </div>
 
     <hr class="sb-divider"/>
 
     <div class="sb-sec">
         <div class="sb-sec-title">How it works</div>
-        <div class="sb-step">
-            <div class="sb-num">1</div>
-            <div class="sb-step-txt">Upload your <strong>.txt</strong> or <strong>.abap</strong> file</div>
-        </div>
-        <div class="sb-step">
-            <div class="sb-num">2</div>
-            <div class="sb-step-txt">Click <strong>Run Analysis</strong></div>
-        </div>
-        <div class="sb-step">
-            <div class="sb-num">3</div>
-            <div class="sb-step-txt">Read the structured report on screen</div>
-        </div>
-        <div class="sb-step">
-            <div class="sb-num">4</div>
-            <div class="sb-step-txt">Download the branded <strong>PDF</strong></div>
-        </div>
+        <div class="sb-step"><div class="sb-num">1</div><div class="sb-step-txt">Choose your <strong>analysis mode</strong></div></div>
+        <div class="sb-step"><div class="sb-num">2</div><div class="sb-step-txt">Upload your SAP objects</div></div>
+        <div class="sb-step"><div class="sb-num">3</div><div class="sb-step-txt">Label each file type</div></div>
+        <div class="sb-step"><div class="sb-num">4</div><div class="sb-step-txt">Click <strong>Run Analysis</strong></div></div>
+        <div class="sb-step"><div class="sb-num">5</div><div class="sb-step-txt">Download branded <strong>PDF</strong></div></div>
     </div>
 
     <hr class="sb-divider"/>
@@ -1082,6 +1342,7 @@ with st.sidebar:
         <span class="sb-badge">MM</span>
         <span class="sb-badge">FI-AA</span>
         <span class="sb-badge">ABAP</span>
+        <span class="sb-badge">S/4HANA</span>
     </div>
 
     <hr class="sb-divider"/>
@@ -1108,98 +1369,211 @@ st.markdown("""
         <span class="ph-pill">⚡ AI-powered</span>
         <span class="ph-pill">📄 PDF export</span>
         <span class="ph-pill">⚠️ Risk flagging</span>
-        <span class="ph-pill">🏢 Enterprise-ready</span>
+        <span class="ph-pill">🚀 S/4HANA ready</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# ── Upload + report sections ──────────────────────────────────────────────────
+# ── Mode selector ─────────────────────────────────────────────────────────────
+st.markdown('<p class="sec-label">Select Analysis Mode</p>', unsafe_allow_html=True)
+
+mode_col, desc_col = st.columns([2, 3], gap="large")
+
+with mode_col:
+    selected_mode = st.selectbox(
+        label="Analysis mode",
+        options=list(MODES.keys()),
+        format_func=lambda k: MODES[k],
+        label_visibility="collapsed",
+    )
+
+with desc_col:
+    mode_sections = MODE_SECTIONS[selected_mode]
+    pills_html = "".join(
+        f'<span class="mode-pill">{s}</span>' for s in mode_sections
+    )
+    st.markdown(
+        f'<div class="mode-desc">{MODE_DESCRIPTIONS[selected_mode]}</div>'
+        f'<div class="mode-pills">{pills_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown('<hr class="light">', unsafe_allow_html=True)
+
+
+# ── File upload (adapts to mode) ──────────────────────────────────────────────
+is_multi = selected_mode in ("bundle", "s4hana")
+
 upload_col, info_col = st.columns([3, 2], gap="large")
 
 with upload_col:
-    st.markdown('<p class="sec-label">Upload SAP Code File</p>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="upload-zone">
-        <div class="uz-hint">Accepts <strong>.txt</strong> and <strong>.abap</strong> files</div>
-    </div>
-    """, unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        label="Upload ABAP file",
-        type=["txt", "abap"],
-        help="Upload a .txt or .abap file containing your custom SAP ABAP code.",
-        label_visibility="collapsed",
+    st.markdown('<p class="sec-label">Upload SAP Objects</p>', unsafe_allow_html=True)
+
+    hint_map = {
+        "single": "Upload one .abap or .txt file",
+        "bundle": "Upload 2–15 SAP objects (.abap, .txt, .csv, .pdf)",
+        "s4hana": "Upload 1–15 ABAP programs to scan",
+    }
+    st.markdown(
+        f'<div class="upload-zone"><div class="uz-hint">{hint_map[selected_mode]}</div></div>',
+        unsafe_allow_html=True,
     )
-    if uploaded_file:
+
+    if is_multi:
+        uploaded_files = st.file_uploader(
+            label="Upload SAP objects",
+            type=ACCEPTED_TYPES,
+            accept_multiple_files=True,
+            help="Select multiple files. You can label each one below.",
+            label_visibility="collapsed",
+        )
+        uploaded_file = None
+    else:
+        uploaded_file  = st.file_uploader(
+            label="Upload ABAP file",
+            type=ACCEPTED_TYPES,
+            help="Upload a .txt or .abap file containing your custom SAP ABAP code.",
+            label_visibility="collapsed",
+        )
+        uploaded_files = [uploaded_file] if uploaded_file else []
+
+    # File status display
+    if uploaded_files:
+        total_kb = sum(
+            getattr(f, "size", 0) for f in uploaded_files if f
+        ) / 1024
+        count    = len([f for f in uploaded_files if f])
         st.markdown(
-            f'<div class="file-ok">✅ <strong>{uploaded_file.name}</strong>'
-            f' &nbsp;·&nbsp; {round(uploaded_file.size / 1024, 1)} KB ready</div>',
+            f'<div class="file-ok">✅ <strong>{count} file{"s" if count != 1 else ""}</strong>'
+            f' &nbsp;·&nbsp; {round(total_kb, 1)} KB total ready</div>',
             unsafe_allow_html=True,
         )
 
 with info_col:
     st.markdown('<p class="sec-label">Report sections</p>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="rp-card">
-        <div class="rp-item"><div class="rp-dot"></div><div class="rp-text">Business Process Summary</div></div>
-        <div class="rp-item"><div class="rp-dot"></div><div class="rp-text">Key SAP Tables Identified</div></div>
-        <div class="rp-item"><div class="rp-dot"></div><div class="rp-text">Data Flow</div></div>
-        <div class="rp-item"><div class="rp-dot"></div><div class="rp-text">Business Risk &amp; Observations</div></div>
-        <div class="rp-item"><div class="rp-dot"></div><div class="rp-text">Plain-English SAP Glossary</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    items_html = "".join(
+        f'<div class="rp-item"><div class="rp-dot"></div>'
+        f'<div class="rp-text">{s}</div></div>'
+        for s in MODE_SECTIONS[selected_mode]
+    )
+    st.markdown(
+        f'<div class="rp-card">{items_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ── File labelling for multi-file modes ───────────────────────────────────────
+FILE_LABEL_OPTIONS = [
+    "ABAP Program",
+    "Function Module",
+    "Table Definition",
+    "Configuration Data (SE16/SM30)",
+    "Transport Log",
+    "Functional Specification",
+    "Org Structure / SPRO Export",
+    "Other SAP Object",
+]
+
+file_labels = {}
+if is_multi and uploaded_files:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<p class="sec-label">Label each file (optional but improves accuracy)</p>', unsafe_allow_html=True)
+    label_cols = st.columns(min(len(uploaded_files), 3))
+    for i, uf in enumerate(uploaded_files):
+        if uf is None:
+            continue
+        col = label_cols[i % len(label_cols)]
+        with col:
+            file_labels[uf.name] = st.selectbox(
+                label=uf.name,
+                options=FILE_LABEL_OPTIONS,
+                key=f"label_{i}_{uf.name}",
+            )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+
 # ── Analyse button ─────────────────────────────────────────────────────────────
+has_files = bool(uploaded_files and any(f for f in uploaded_files if f))
+
 analyse_clicked = st.button(
-    "▶  Run Analysis" if uploaded_file else "Upload a file to begin",
-    disabled=(uploaded_file is None),
+    f"▶  Run {MODES[selected_mode].split('  ')[1]}" if has_files else "Upload files to begin",
+    disabled=not has_files,
 )
 
 
 # ── Session state ──────────────────────────────────────────────────────────────
-if "analysis_result" not in st.session_state:
-    st.session_state["analysis_result"] = None
-if "analysed_filename" not in st.session_state:
-    st.session_state["analysed_filename"] = None
+for key in ("analysis_result", "analysed_filename", "analysis_mode"):
+    if key not in st.session_state:
+        st.session_state[key] = None
 
-if analyse_clicked and uploaded_file is not None:
-    raw_bytes = uploaded_file.read()
-    try:
-        code_text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        code_text = raw_bytes.decode("latin-1")
 
-    if len(code_text.strip()) == 0:
-        st.warning("The uploaded file appears to be empty. Please upload a file with ABAP code.")
+# ── Run analysis ───────────────────────────────────────────────────────────────
+if analyse_clicked and has_files:
+
+    # Build the file list for multi-mode calls
+    file_list = []
+    for uf in uploaded_files:
+        if uf is None:
+            continue
+        content, ftype = extract_text_from_file(uf)
+        file_list.append({
+            "name":    uf.name,
+            "type":    ftype,
+            "label":   file_labels.get(uf.name, ""),
+            "content": content,
+        })
+
+    if not any(f["content"].strip() for f in file_list):
+        st.warning("All uploaded files appear to be empty.")
     else:
-        with st.spinner("Analysing your SAP code… this usually takes 15–30 seconds."):
+        spinner_msgs = {
+            "single": "Analysing your SAP code… usually 15–30 seconds.",
+            "bundle": f"Analysing {len(file_list)} SAP objects… usually 30–60 seconds.",
+            "s4hana": f"Running S/4HANA readiness scan on {len(file_list)} program(s)… usually 30–60 seconds.",
+        }
+        with st.spinner(spinner_msgs[selected_mode]):
             try:
-                result = analyse_sap_code(code_text)
+                if selected_mode == "single":
+                    result = analyse_single(file_list[0]["content"])
+                    fname  = file_list[0]["name"]
+                elif selected_mode == "bundle":
+                    result = analyse_bundle(file_list)
+                    fname  = f"Bundle ({len(file_list)} objects)"
+                else:
+                    result = analyse_s4hana(file_list)
+                    fname  = f"S4HANA Scan ({len(file_list)} programs)"
+
                 st.session_state["analysis_result"] = result
-                st.session_state["analysed_filename"] = uploaded_file.name
-            except EnvironmentError as env_err:
-                st.error(f"⚠️ Configuration error: {env_err}")
+                st.session_state["analysed_filename"] = fname
+                st.session_state["analysis_mode"]    = selected_mode
+
+            except EnvironmentError as e:
+                st.error(f"⚠️ Configuration error: {e}")
             except anthropic.AuthenticationError:
-                st.error("⚠️ Authentication failed. Check your ANTHROPIC_API_KEY in secrets.toml.")
+                st.error("⚠️ Authentication failed. Check ANTHROPIC_API_KEY in secrets.toml.")
             except anthropic.RateLimitError:
                 st.error("⚠️ Rate limit reached. Please wait a moment and try again.")
-            except Exception as exc:
-                st.error(f"⚠️ An unexpected error occurred: {exc}")
+            except Exception as e:
+                st.error(f"⚠️ An unexpected error occurred: {e}")
 
 
 # ── Result display ─────────────────────────────────────────────────────────────
 if st.session_state["analysis_result"]:
     analysis = st.session_state["analysis_result"]
     fname    = st.session_state["analysed_filename"]
+    mode     = st.session_state["analysis_mode"] or "single"
+
+    mode_icon = {"single": "📋", "bundle": "📦", "s4hana": "🚀"}.get(mode, "📋")
+    mode_label = MODES.get(mode, "Analysis Report").split("  ", 1)[-1]
 
     st.markdown('<hr class="light">', unsafe_allow_html=True)
 
     st.markdown(
         f'''<div class="result-hdr">
-            <span class="rh-icon">📋</span>
-            <span class="rh-title">Analysis Report</span>
+            <span class="rh-icon">{mode_icon}</span>
+            <span class="rh-title">{mode_label}</span>
             <span class="rh-file">{fname}</span>
         </div>''',
         unsafe_allow_html=True,
@@ -1211,20 +1585,20 @@ if st.session_state["analysis_result"]:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    stem      = fname.rsplit(".", 1)[0]
+    safe_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', fname)[:40]
     ts        = datetime.now().strftime("%Y%m%d_%H%M")
-    pdf_fname = f"vivrta_analysis_{stem}_{ts}.pdf"
-    txt_fname = f"vivrta_analysis_{stem}_{ts}.txt"
+    pdf_fname = f"vivrta_{mode}_{safe_stem}_{ts}.pdf"
+    txt_fname = f"vivrta_{mode}_{safe_stem}_{ts}.txt"
 
     st.markdown('<p class="sec-label">Export report</p>', unsafe_allow_html=True)
     dl_col1, dl_col2, _ = st.columns([1.2, 1, 1.8], gap="small")
 
     with dl_col1:
         try:
-            pdf_bytes = build_pdf(fname, analysis)
+            pdf_bytes_out = build_pdf(fname, analysis)
             st.download_button(
                 label="⬇  Download PDF Report",
-                data=pdf_bytes,
+                data=pdf_bytes_out,
                 file_name=pdf_fname,
                 mime="application/pdf",
             )
