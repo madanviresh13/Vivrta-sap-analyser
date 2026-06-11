@@ -327,6 +327,39 @@ RULE 6 — DO NOT SPECULATE ON INTENT: If code does something unusual, report
   what the code does and flag it as a potential issue. Do not assert it is
   definitely wrong — recommend the customer verify against their template.
 
+RULE 7 — NEVER MAKE ABSOLUTE COMPLIANCE OR SECURITY OUTCOME CLAIMS:
+  Banned phrases — never use them:
+    'SOX violation', 'GDPR violation', 'compliance violation'
+    'guaranteed', 'will definitely', 'certainly will', 'inevitably'
+    'complete bypass', 'full bypass', 'bypasses all controls'
+    'unauthorized access will occur', 'data will be exposed'
+  Instead: state what the CODE does, then state the RISK.
+  Security outcomes depend on role design, system config, and audit scope.
+
+RULE 8 — EXECUTION CONTEXT MATTERS FOR RISK:
+  State HOW the program runs before rating any security or performance risk:
+    - Dialog transaction (SE38 / transaction code): user-driven, role controls apply
+    - Background job: no user interaction, typically a service user
+    - RFC function module: callable externally, higher exposure
+    - SUBMIT from another program: inherits caller context
+  If unknown from the code, state: 'Execution context unknown — risk rating
+  assumes dialog use. Verify actual deployment.'
+
+RULE 9 — SELECT * REQUIRES FIELD-LEVEL ANALYSIS:
+  When flagging SELECT * or SELECT without field list, also state:
+  (a) Which fields from that table are actually USED downstream
+  (b) Which fields are therefore fetched unnecessarily
+  (c) Practical performance implication (e.g. 'BSEG has 200+ fields;
+      only DMBTR and BELNR are used — 198+ unused fields per row')
+
+RULE 10 — ANLB TIME-DEPENDENCY (FI-AA):
+  Any read of ANLB must be checked for:
+  (a) AFABER (depreciation area key) in WHERE clause
+  (b) BDATU/ADATU (validity dates) in WHERE clause
+  (c) GJAHR (fiscal year) scoping
+  Missing any produces incorrect depreciation results. Flag [HIGH CONFIDENCE]
+  if ANLB is read without AFABER or date filtering.
+
 OUTPUT STRUCTURE — follow exactly:
 
 ## Business Process Summary
@@ -391,6 +424,12 @@ MASTER RULES:
 5. NEVER invent SAP object names, Note numbers, or transaction codes.
    If uncertain of an exact name, write "verify in SAP official documentation".
 6. Every [HIGH CONFIDENCE] finding must include: Evidence: `exact code pattern`
+7. NEVER write 'SOX violation', 'complete bypass', 'will definitely', or
+   'unauthorized access will occur'. State what the code does and the risk.
+8. For any security risk, state the execution context (dialog/background/RFC)
+   and how it affects the risk rating. If unknown, say so explicitly.
+9. For SELECT * findings, list fields actually used downstream and estimate
+   the volume of unnecessary data fetched per row.
 
 OUTPUT STRUCTURE — follow exactly:
 
@@ -535,6 +574,11 @@ ACCURACY RULES FOR THIS ASSESSMENT:
 - For RED findings, state a replacement API only if you are certain.
   If uncertain: "SAP provides a replacement — confirm in the simplification
   item catalogue for your specific S/4HANA release."
+- NEVER write "SOX violation", "compliance violation guaranteed", "complete bypass",
+  or "unauthorized access will occur". State the risk, not the outcome.
+- ANLB TIME-DEPENDENCY: Any read of ANLB without AFABER (depreciation area),
+  BDATU/ADATU (validity dates), or GJAHR (fiscal year) in the WHERE clause
+  produces incorrect depreciation results. Flag as RED — confirmed S/4HANA risk.
 
 TONE: Precise, technical, actionable. This report will be presented to both the
 ABAP development team (who need exact fixes) and the project steering committee
@@ -830,7 +874,12 @@ SYSTEM_PROMPT_REVIEWER = (
     "4. Statements that conflate what the code does with SAP standard behaviour\n"
     "5. Statements that say a BAPI 'ensures', 'guarantees', or 'enforces' authorisations\n"
     "6. Overstatements — claiming something is definitely wrong when it is only "
-    "possibly wrong given what can be seen in the code\n\n"
+    "possibly wrong given what can be seen in the code\n"
+    "7. Absolute compliance claims: 'SOX violation', 'GDPR violation', "
+    "'compliance violation', 'guaranteed', 'will definitely', 'inevitably'\n"
+    "8. Absolute security claims: 'complete bypass', 'full bypass', "
+    "'unauthorized access will occur', 'bypasses all controls'\n"
+    "   Security outcomes depend on role design and system config — not confirmable from code.\n\n"
     "For each issue found, output:\n"
     "ISSUE [N]: [brief description]\n"
     "LOCATION: [quote the problematic sentence]\n"
@@ -1053,10 +1102,13 @@ def _extract_config_facts(files: list) -> str:
     separator = "=" * 51
     return (
         f"\n\n{separator}\n"
-        "VERIFIED CUSTOMER CONFIGURATION DATA\n"
-        "The following facts come directly from this customer's\n"
-        "SAP system exports. Treat them as ground truth and do\n"
-        "NOT override them with general SAP default assumptions.\n"
+        "CUSTOMER CONFIGURATION DATA (from uploaded exports)\n"
+        "Use as primary reference for this customer's system.\n"
+        "IMPORTANT — state these caveats in your report:\n"
+        "  - Exports may be from a test/development system, not production\n"
+        "  - May be partial (not all config visible)\n"
+        "  - Where config contradicts code behaviour, flag the discrepancy\n"
+        "  - Prefix config-based statements with: 'Based on provided exports'\n"
         f"{separator}\n\n"
         + "\n\n".join(facts)
         + f"\n{separator}\n"
