@@ -614,20 +614,119 @@ _SAP_FM_PREFIXES = (
     "POPUP_","AUTHORITY_","F4_","RFC_","REUSE_","FINS_",
 )
 
-# Words that look like SAP names but are not — skip them
-_SKIP_WORDS = {
-    "HIGH","MEDIUM","VERIFY","CONTEXT","INFERRED","CONFIDENCE","NOTE",
-    "TRUE","FALSE","NULL","SELECT","WHERE","FROM","INTO","TABLE","TYPE",
-    "ABAP","HANA","DATA","LIKE","FORM","MOVE","READ","LOOP","ENDLOOP",
-    "CALL","FUNCTION","PERFORM","MODULE","REPORT","WRITE","MODIFY",
-    "DELETE","INSERT","UPDATE","COMMIT","ROLLBACK","CHECK","CLEAR",
-    "APPEND","SORT","SUBMIT","LEAVE","EXIT","CREATE","OBJECT","METHOD",
-    "BEGIN","END","BLOCK","SCREEN","SECTION","AUTHORITY","RAISE","CATCH",
-    "NOTE","FIORI","CLOUD","REST","ODATA","JSON","HTTP","HTTPS","XML",
-    "RFC","IDOC","ALE","EDI","BADI","RISK","NONE","PASS","FAIL","RED",
-    "AMBER","GREEN","SPRINT","OWNER","TASK","EFFORT","PROGRAM","FIND",
+# ── Comprehensive English + SAP-advisory word filter ─────────────────────────
+# Any word in this set is never flagged, regardless of whether it appears in
+# the uploaded code. This covers: English vocabulary, ABAP keywords, SAP advisory
+# terms, and general report language. The goal is to flag ONLY genuine SAP object
+# names that the model may have invented.
+_COMMON_WORDS = {
+    # ABAP keywords and statements
+    "SELECT","FROM","WHERE","INTO","TABLE","INNER","OUTER","LEFT","RIGHT",
+    "JOIN","JOINS","ORDER","GROUP","HAVING","UNION","EXCEPT","FETCH","WITH",
+    "LOOP","ENDLOOP","FORM","ENDFORM","PERFORM","MODULE","REPORT","WRITE",
+    "MODIFY","DELETE","INSERT","UPDATE","COMMIT","ROLLBACK","CHECK","CLEAR",
+    "APPEND","SORT","SUBMIT","LEAVE","EXIT","CREATE","METHOD","BEGIN","END",
+    "BLOCK","SCREEN","SECTION","RAISE","CATCH","COLLECT","MOVE","READ",
+    "CALL","FUNCTION","INCLUDE","DATA","TYPE","LIKE","FIELD","OPEN","CLOSE",
+    "TRANSFER","ASSIGN","UNASSIGN","DESCRIBE","CONDENSE","CONCATENATE","SPLIT",
+    "FIND","REPLACE","TRANSLATE","CONVERT","COMPUTE","MULTIPLY","DIVIDE","ADD",
+    "SUBTRACT","PACK","UNPACK","SHIFT","OVERLAY","SEARCH","STRLEN","NUMOFCHAR",
+    "WAIT","USING","BASED","HAVING","CROSS","MANDT","SFLIGHT","COLLECT",
+    # Confidence/report structure words
+    "HIGH","MEDIUM","VERIFY","CONTEXT","INFERRED","CONFIDENCE","NOTE","NOTES",
+    "TRUE","FALSE","NULL","NONE","PASS","FAIL","RISK","RISKS","ISSUE","ISSUES",
+    "RED","AMBER","GREEN","SPRINT","OWNER","EFFORT","TASK","TASKS","FINDING",
+    # Common English — verbs
+    "ALSO","BOTH","SUCH","THUS","UPON","WHEN","WILL","NEXT","LAST","JUST",
+    "THEN","THAN","OVER","EACH","HAVE","DOES","DONE","MAKE","MADE","TAKE",
+    "TOOK","GIVE","GAVE","WENT","COME","CAME","KEEP","KEPT","HELD","HOLD",
+    "HELP","MEAN","SAID","SEEM","MUST","NEED","WANT","ABLE","LIKE","LEFT",
+    "LONG","SAME","WIDE","LIVE","KNOW","TELL","FEEL","SETS","GETS","PUTS",
+    "RUNS","LOGS","FIND","LOAD","SAVE","SEND","SHOW","AIMS","ADDS","CALLS",
+    "READS","MAPS","PUTS","DOES","USES","ADDS","RUNS","LOGS","SENDS","SHOWS",
+    "HOLDS","LEADS","MEANS","MAKES","TAKES","GIVES","COMES","KEEPS","HELPS",
+    "NEEDS","WANTS","KNOWS","TELLS","FEELS","FINDS","LOADS","SAVES","STARTS",
+    # Common English — nouns/adjectives used in reports
+    "FIELD","FIELDS","TABLE","TABLES","BLOCK","CLASS","LAYER","LEVEL","SCOPE",
+    "STAGE","PHASE","POINT","GROUP","VALUE","VALUES","ENTRY","ENTRIES","QUERY",
+    "BATCH","LIMIT","RANGE","INDEX","ITEMS","LINES","NODES","TYPES","CODES",
+    "ERROR","RULE","RULES","FLAG","FLAGS","STEP","STEPS","LIST","VIEW","ROLE",
+    "USER","MODE","RATE","FLOW","PATH","TERM","CASE","KEYS","ROWS","UNIT",
+    "NAME","CODE","DATE","TIME","TEXT","SIZE","WORD","LINE","MARK","SIGN",
+    "LINK","LOCK","FILE","WORK","DOCS","MAPS","COLS","LOGS","FORM","FORMS",
+    "VIEWS","ROLES","USERS","MODES","RATES","FLOWS","PATHS","TERMS","CASES",
+    # SAP context English (not object names)
+    "POSTING","POSTINGS","DOCUMENT","DOCUMENTS","ACCOUNT","ACCOUNTS",
+    "VENDOR","VENDORS","CUSTOMER","CUSTOMERS","ASSET","ASSETS","PERIOD",
+    "PERIODS","FISCAL","CURRENCY","CURRENCIES","COMPANY","COMPANIES",
+    "MODULE","MODULES","PROGRAM","PROGRAMS","REPORT","REPORTS",
+    "OBJECT","OBJECTS","VARIABLE","VARIABLES","STRUCTURE","STRUCTURES",
+    "INTERNAL","EXTERNAL","STANDARD","CUSTOM","GLOBAL","LOCAL",
+    "TECHNICAL","FUNCTIONAL","BUSINESS","PROCESS","PROCESSES",
+    "TRANSACTION","TRANSACTIONS","CONFIGURATION","AUTHORIZATION",
+    "AUTHORISATION","SECURITY","PERFORMANCE","VALIDATION","PROCESSING",
+    "INTERFACE","INTEGRATION","MIGRATION","ENHANCEMENT","IMPLEMENTATION",
+    "DEVELOPMENT","MAINTENANCE","PRODUCTION","ENVIRONMENT","SYSTEM",
+    "SYSTEMS","PLATFORM","FRAMEWORK","SOLUTION","ARCHITECTURE","DESIGN",
+    "TEMPLATE","INSTANCE","SESSION","STATEMENT","STATEMENTS",
+    "PARAMETER","PARAMETERS","FUNCTION","FUNCTIONS","MISSING","ADDING",
+    "CALLED","IMPROVE","PREVENT","COMBINE","ACCESS","CLAUSE","USING",
+    "WOULD","SHOULD","COULD","MIGHT","CONSIDER","BETTER","SCANS",
+    "AUTHORITY","VALID","INNER","OUTER","JOIN","APPEND","WAIT",
+    # Common 4-letter English words often falsely flagged
+    "ALSO","BACK","CALL","COST","EACH","EVEN","EVER","FIVE","FOUR","FREE",
+    "FULL","GOOD","HALF","HAND","HARD","HEAD","HIGH","HOME","INTO","KEEP",
+    "KNOW","LAST","LATE","LEAD","LESS","LIKE","LINE","LIST","LIVE","LONG",
+    "LOOK","LOVE","MADE","MAIN","MAKE","MANY","MARK","MEAN","MEET","MEMO",
+    "META","MOVE","MUCH","MUST","NAME","NEAR","NEED","NEXT","NONE","NOTE",
+    "NULL","ONLY","OPEN","OVER","PAST","PLAN","PLUS","REAL","REPO","REST",
+    "RISK","ROLE","ROOM","ROOT","RULE","SAFE","SAME","SAVE","SEND","SETS",
+    "SHOW","SIDE","SIGN","SIZE","SKIP","SLOW","SOME","SORT","STOP","SUCH",
+    "SURE","TAKE","TELL","THAN","THAT","THEM","THEN","THEY","THIS","THUS",
+    "TIME","TOLD","TOOL","ALSO","UPON","USED","USER","USES","VERY","VIEW",
+    "WAIT","WALK","WARN","WHAT","WHEN","WITH","WORD","WORK","WRAP","YOUR",
+    "ZERO","ABAP","HANA","FIORI","CLOUD","REST","ODATA","JSON","HTTP",
+    "HTTPS","XML","RFC","IDOC","ALE","EDI","BADI","AUDIT","BOARD","CYCLE",
+    "DRAFT","EVENT","GRANT","LOGIC","MIXED","PATCH","PRINT","QUEUE","RAPID",
+    "SWEEP","TOKEN","TRACE","VISIT","BOOST","BURST","CROWD","CURVE","DEBUG",
+    "DECAY","DEFER","DELTA","DENSE","DIGIT","DIRTY","EAGER","EIGHT","ELECT",
+    "EMBED","ENACT","EQUIP","ERASE","EXACT","FANCY","FAULT","FEWER","FIFTH",
+    "FINAL","FIRST","FIXED","FLOAT","FLUSH","FRESH","FRONT","GIVEN","GRAPH",
+    "GROWN","GUESS","GUEST","GUIDE","HABIT","HAPPY","HARSH","HEART","HENCE",
+    "HONOR","HOTEL","IDEAL","INFER","JOINT","JUDGE","LARGE","LATER","LEARN",
+    "LEGAL","LIGHT","MERGE","NOTED","OFTEN","PARSE","PLACE","PLAIN","POWER",
+    "PRIOR","PROVE","PURGE","REACH","READY","REALM","REFER","RESET","RIGHT",
+    "RIGID","ROUND","ROUTE","SCORE","SETUP","SHARE","SHIFT","SHORT","SHOWN",
+    "SINCE","SIXTH","SLICE","SMART","SOLVE","SPACE","SPLIT","STACK","STILL",
+    "STORE","STRIP","STYLE","SUITE","SWIFT","THIRD","TIGHT","TIMER","TITLE",
+    "TOTAL","TOUCH","TRACK","TRAIL","TRIAL","TRUST","TWICE","UNDER","UNTIL",
+    "UPPER","USAGE","VIRAL","VITAL","WIDER","WORSE","YIELD","ALLOW","CAUSE",
+    "COUNT","COVER","DATES","DEPTH","EXTRA","FOCUS","HUMAN","ULTRA","COULD",
+    "ABOUT","ABOVE","AFTER","AGAIN","ALONG","AMONG","APPLY","AVOID","BELOW",
+    "BUILT","CLEAN","CLOSE","COMES","COSTS","CROSS","DAILY","DELAY","DRIVE",
+    "EARLY","EMPTY","ENDED","ENTER","EVERY","FORCE","FOUND","GREAT","GUARD",
+    "HEAVY","HOURS","IMPLY","INPUT","LABEL","LOWER","MAJOR","MATCH","MEANS",
+    "MINOR","MODEL","MONTH","MULTI","NEVER","OCCUR","OTHER","OWNER","QUICK",
+    "QUITE","RETRY","REUSE","SCALE","SMALL","START","STATE","TERMS","THROW",
+    "TODAY","TRAIN","TREAT","WATCH","WHILE","WHOLE","WRONG","YEARS","CHAIN",
+    "CHUNK","CLONE","CRON","TOKEN","DENSE","BURST","AUDIT",
 }
 
+
+def _extract_code_objects(code_text: str) -> set:
+    """
+    Extract all SAP-style identifiers from ABAP source, returned as uppercase.
+
+    Handles all real-world ABAP patterns:
+      Plain names:           bkpf / BKPF / Bkpf
+      Structure components:  gs_header-bukrs  -> BUKRS extracted
+      Field strings:         <ls_bseg>-belnr  -> BELNR extracted
+      Type references:       TYPE bseg-dmbtr  -> DMBTR extracted
+    """
+    upper = code_text.upper()
+    tokens = set(_re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", upper))
+    tokens.update(_re.findall(r"-([A-Z][A-Z0-9_]{2,})\b", upper))
+    return tokens
 
 def _extract_code_objects(code_text: str) -> set:
     """
@@ -676,27 +775,42 @@ def _validate_report(report: str, code_objects: set) -> tuple:
             )
 
     # Flag SAP object names in the report not grounded in the code.
-    # Both sets are uppercase so the comparison is case-insensitive.
-    # code_objects is built from the normalised (uppercased) source,
-    # so belnr, gt_bseg-belnr, and BELNR all produce "BELNR" in code_objects.
+    # All comparisons are uppercase — code_objects is built from uppercased source
+    # so gs_bseg-belnr, belnr, and BELNR all produce "BELNR" in code_objects.
     report_objects = set(_re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b", report))
+
     for obj in sorted(report_objects):
-        if obj in code_objects:          # present in uploaded code -> fine
+        # 1. Present in the uploaded code (includes field names, table names, vars)
+        if obj in code_objects:
             continue
-        if obj in _SAP_KNOWN_TABLES:    # known standard SAP table -> fine
+        # 2. Known standard SAP table
+        if obj in _SAP_KNOWN_TABLES:
             continue
-        if obj.startswith(_SAP_FM_PREFIXES):  # known FM/BAPI prefix -> fine
+        # 3. Known FM/BAPI name prefix
+        if obj.startswith(_SAP_FM_PREFIXES):
             continue
-        if obj in _SKIP_WORDS:          # English word or ABAP keyword -> skip
+        # 4. Common English word or ABAP keyword or SAP advisory term
+        if obj in _COMMON_WORDS:
             continue
+        # 5. Custom Z/Y objects — we cannot validate these from a reference list
+        if obj.startswith(("Z", "Y")):
+            continue
+        # 6. Too short to be a meaningful SAP object name
         if len(obj) < 4:
             continue
-        if obj.startswith(("Z", "Y")):  # custom Z/Y objects -> skip
+        # 7. SAP transaction code pattern: 1-4 alpha + 0-2 digits, max 6 chars,
+        #    no underscore (OBA7, SE16, SPRO, MIGO, VF01, ME21N, FB01)
+        if not "_" in obj and len(obj) <= 6 and _re.match(r"^[A-Z][A-Z0-9]{1,5}$", obj):
             continue
-        # Only flag if it looks like a genuine SAP object name:
-        # must be 4+ uppercase letters/digits, no spaces, typical SAP naming
-        if not _re.match(r"^[A-Z][A-Z0-9_]{3,}$", obj):
+        # 8. Authorisation / check object pattern: F_*, S_*, P_*, M_*, C_*
+        #    These are legitimate to mention in advisory context
+        if _re.match(r"^[FSPMCE]_[A-Z]", obj):
             continue
+        # 9. Local/global variable prefixes used in explanatory text
+        #    LV_, GS_, GT_, LS_, LT_, GV_, WA_, IT_, IS_, IV_, EV_, ES_, ET_ etc.
+        if _re.match(r"^[GL][VSTIE][_]", obj) or _re.match(r"^[WI][AT]_", obj):
+            continue
+        # Passed all filters — this looks like it could be an invented SAP object
         warnings.append(
             f"SAP object '{obj}' appears in the report but not in the uploaded "
             f"code — verify this name is correct"
