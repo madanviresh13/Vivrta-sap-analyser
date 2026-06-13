@@ -416,22 +416,37 @@ Flag any field mapping where source and destination types look mismatched.
 Note hard-coded values (currency, document type, company code) as observed facts.
 
 ## Business Risk & Observations
-Prefix every finding with a confidence indicator. Investigate:
-- Direct DB writes (INSERT, UPDATE, MODIFY) to financial tables
-- Missing AUTHORITY-CHECK statements in custom code. When recommending
-  an AUTHORITY-CHECK, provide an illustrative example but always state:
-  'Authorisation object field values must be verified in SU21/PFCG —
-  field definitions and permitted values vary by implementation. Do not
-  copy this example without confirming the correct object and field names
-  for this specific system.'
-- Hard-coded values: currencies, company codes, fiscal years, date literals
-- Bypasses of standard SAP posting logic
-- Performance risks on large datasets
-- Data-mapping mismatches
-- Generic BAPI used where a specific one is the standard approach
-- Capitalisation dates, vendor references, or other fields parsed but never used
 
-Security summary (use exact wording):
+Present EVERY finding using this exact six-field structure.
+Do not use plain paragraph text for findings — use this format for every one:
+
+**Finding:** [one-line title]
+**Evidence:** [exact code construct or observable fact — quote the line/pattern]
+**Confidence:** [percentage 0–100% with one-sentence justification]
+**Business Impact:** [what could go wrong in business terms — one or two sentences]
+**Assumptions:** [what you are taking for granted that is NOT proven by the code alone]
+**Verification:** [specific SAP transactions or steps to confirm — e.g. SU24, SU53, SE16, PFCG]
+**Severity:** [Critical / High / Medium / Low — per Rule 7a calibration]
+
+Investigate and apply the above structure to every instance of:
+- Direct DB writes (INSERT, UPDATE, MODIFY) to financial tables
+- Missing AUTHORITY-CHECK in custom code
+  (when giving a sample AUTHORITY-CHECK, append: 'Object field values must be verified
+  in SU21/PFCG — definitions vary by implementation. Do not copy without verification.')
+- Hard-coded values: currencies, company codes, fiscal years, document types
+- Bypasses of standard SAP posting logic
+- Performance risks (SELECT *, large datasets, missing WHERE clause)
+- Data-mapping mismatches (field type or semantic mismatch)
+- Generic BAPI where a specific one is standard SAP practice
+- Fields parsed/populated but never passed to BAPI structures
+
+Confidence guidance:
+  95–99% — directly visible hard-coded value or missing statement; no ambiguity
+  70–94% — pattern is present but impact depends on data or config not in the code
+  40–69% — general concern; requires investigation to confirm
+  <40%   — flag as [INFERRED — NOT IN CODE] and state what would need to be true
+
+Security summary — use this exact wording:
 "No obvious direct-table-write bypass or major security issue was detected in this code.
 This does not constitute a full security or controls review."
 Close with: "A qualified SAP consultant or auditor should review this program before
@@ -508,10 +523,26 @@ For each ABAP program or function module uploaded, provide a concise summary:
 - **Lines of code (approximate):** estimate
 
 ## Consolidated Risk Register
-A prioritised table of all findings across all programs:
-| Priority | Finding | Affected Objects | Confidence | Recommended Action |
-Order by: Critical → High → Medium → Low.
-Do not repeat findings — consolidate similar issues across programs into one row.
+
+For each finding, use this exact structure (one block per finding):
+
+**Finding:** [one-line title]
+**Affected Objects:** [program names]
+**Evidence:** [exact code construct or observable fact]
+**Confidence:** [percentage with one-sentence justification]
+**Business Impact:** [business consequence in plain English]
+**Assumptions:** [what is taken for granted, not proven by code]
+**Verification:** [SAP transactions to confirm — SU24, SU53, SE16, PFCG, etc.]
+**Severity:** [Critical / High / Medium / Low]
+
+Order findings: Critical → High → Medium → Low.
+Do not repeat findings — consolidate identical issues across programs into one block.
+
+Confidence guidance:
+  95–99% — directly visible in code; no ambiguity
+  70–94% — visible but impact depends on config or runtime data
+  40–69% — requires investigation to confirm
+  <40%   — label [INFERRED — NOT IN CODE]
 
 ## Estate Improvement Recommendations
 Top 5 actionable recommendations for the development team, ordered by business impact.
@@ -584,15 +615,22 @@ Overall Estate Rating: [Not Ready / Needs Work / Minor Changes / Ready]
 One paragraph explaining the overall rating.
 
 ## 🔴 Critical Blockers
-For each RED finding across all programs:
-**[Finding Title]** — Affected program(s): X
-- What the code does: (specific line/pattern observed)
-- Why it breaks in S/4HANA: (precise technical reason)
-- Required fix: (specific ABAP change or replacement API)
-- Estimated fix effort: (hours)
+
+For each RED finding, use this exact structure:
+
+**Finding:** [one-line title]
+**Affected Program(s):** [program names]
+**Evidence:** [exact ABAP statement or pattern observed — quote it]
+**Confidence:** [percentage with one-sentence justification]
+**Business Impact:** [what breaks or produces wrong results in S/4HANA]
+**Assumptions:** [what is taken for granted — e.g. "assumes standard S/4HANA 2023 table structures"]
+**Verification:** [SAP transaction or tool to confirm — e.g. SCMA, SPDD, simplification item catalogue]
+**Required Fix:** [specific ABAP change or replacement API — if uncertain, say "verify in catalogue"]
+**Estimated Effort:** [hours for an experienced ABAP developer]
 
 ## 🟡 Warnings Requiring Review
-For each AMBER finding, same format as above but shorter.
+
+For each AMBER finding, use the same structure as above.
 
 ## 🟢 S/4HANA Compatible Patterns
 List the things this code does WELL that are already S/4HANA compatible.
@@ -1620,6 +1658,44 @@ class VivrtaRenderer:
                        new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(L.GLOSS_AFTER)
 
+    def finding_field(self, key: str, value: str) -> None:
+        """
+        Renders one field of a structured finding block.
+        Bold indigo key label fixed at 38mm, normal body text for the value.
+        Severity key gets an automatically coloured badge.
+        """
+        L, pdf = self.L, self.pdf
+        self._guard(needed_mm=7)
+        KEY_W = 38
+        SEVERITY_COLORS = {
+            "CRITICAL": L.C_BADGE_HIGH,
+            "HIGH":     L.C_BADGE_HIGH,
+            "MEDIUM":   L.C_BADGE_MED,
+            "LOW":      L.C_BADGE_LOW,
+        }
+        if key.upper() == "SEVERITY":
+            sev   = value.strip().upper().split()[0]
+            color = SEVERITY_COLORS.get(sev, L.C_BRAND_GREY)
+            bw    = pdf.get_string_width(value.strip()) + L.BADGE_PAD_X * 2
+            pdf.set_x(L.MARGIN_LEFT)
+            self._font("B", L.BODY_SZ, L.C_BRAND_INDIGO)
+            pdf.cell(KEY_W, L.BODY_LH, key + ":",
+                     new_x=XPos.RIGHT, new_y=YPos.TOP)
+            pdf.set_fill_color(*color)
+            self._font("B", L.BADGE_SZ, (255, 255, 255))
+            pdf.cell(bw, L.BODY_LH, value.strip(), fill=True,
+                     new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(L.BODY_AFTER)
+            return
+        pdf.set_x(L.MARGIN_LEFT)
+        self._font("B", L.BODY_SZ, L.C_BRAND_INDIGO)
+        pdf.cell(KEY_W, L.BODY_LH, key + ":",
+                 new_x=XPos.RIGHT, new_y=YPos.TOP)
+        self._font("", L.BODY_SZ, L.C_TEXT)
+        pdf.multi_cell(L.BODY_W - KEY_W, L.BODY_LH, value,
+                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(L.BODY_AFTER * 0.5)
+
     # ── Pipe table ────────────────────────────────────────────────────────────
     def render_table(self, rows: list) -> None:
         """
@@ -1805,6 +1881,12 @@ def _parse_and_render(renderer: VivrtaRenderer, markdown_text: str) -> None:
                     break
             if not matched:
                 renderer.plain_risk_item(_clean_md(stripped))
+            continue
+
+        # ── Structured finding field: **Key:** Value ──────────────────────────
+        fm = re.match(r"^\*\*([^*:]{1,30}):\*\*\s*(.*)", stripped)
+        if fm:
+            renderer.finding_field(fm.group(1).strip(), _clean_md(fm.group(2).strip()))
             continue
 
         gm = re.match(r"^\*\*(.+?)\*\*\s*[—–-]+\s*(.*)", stripped)
