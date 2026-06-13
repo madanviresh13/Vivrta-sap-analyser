@@ -261,6 +261,7 @@ MODE_DESCRIPTIONS = {
 
 MODE_SECTIONS = {
     "single": [
+        "<strong>Executive Brief</strong> — leadership summary (front page)",
         "Business Process Summary",
         "Key SAP Tables Identified",
         "Data Flow",
@@ -268,6 +269,7 @@ MODE_SECTIONS = {
         "Plain-English SAP Glossary",
     ],
     "bundle": [
+        "<strong>Executive Brief</strong> — leadership summary (front page)",
         "Estate Executive Summary",
         "Cross-Program Object Inventory",
         "Shared Tables & Dependencies",
@@ -276,12 +278,14 @@ MODE_SECTIONS = {
         "Consolidated Risk Register",
     ],
     "s4hana": [
+        "<strong>Executive Brief</strong> — leadership summary (front page)",
         "S/4HANA Readiness Scorecard",
         "Critical Blockers (Red)",
         "Warnings Requiring Review (Amber)",
         "Best-Practice Confirmations (Green)",
         "Prioritised Remediation Plan",
         "Estimated Migration Effort",
+        "<strong>Scope Estimate</strong> — total remediation developer days",
     ],
 }
 
@@ -666,6 +670,149 @@ TONE: Precise, technical, actionable. This report will be presented to both the
 ABAP development team (who need exact fixes) and the project steering committee
 (who need business risk and timeline). Write for both audiences simultaneously.
 """.strip()
+
+
+# ── System prompt: Executive Brief ────────────────────────────────────────────
+SYSTEM_PROMPT_EXECUTIVE_BRIEF = """
+You are a senior SAP advisor writing a half-page executive brief for a C-suite audience
+(CFO, CIO, or Finance Director). This brief appears at the front of a detailed technical
+SAP code analysis report. Your reader has no SAP or coding background — every sentence
+must be in plain English business language.
+
+You are given the full technical analysis that follows this brief. Your job is to
+distil it into exactly three things:
+
+1. WHAT THIS CODE DOES — one to two sentences. What business process does this code
+   support? What problem does it solve? Write it so a CFO understands it in 10 seconds.
+   Do NOT use ABAP, BAPI, RFC, FM, or any technical acronym without immediately
+   explaining it in brackets.
+
+2. OVERALL RISK RATING — one of: LOW / MEDIUM / HIGH / CRITICAL
+   Derive this directly from the findings in the report. State the rating and then
+   give one plain-English sentence explaining what it means for the business.
+   Example: "HIGH — the program contains hard-coded financial values and missing access
+   controls that should be reviewed before the next audit cycle."
+   NEVER use the words "SOX", "GDPR", "bypass", or "violation" — frame risk in
+   business terms only.
+
+3. TOP 3 ACTIONS — the three most important things leadership should ask the IT team
+   to do, in plain English, prioritised by business risk. Use simple action verbs:
+   "Ask your IT team to...", "Commission a review of...", "Before go-live, confirm that..."
+   Each action must be one sentence. Never reference specific ABAP keywords or table
+   names — translate them to business terms.
+
+OUTPUT FORMAT — use these exact headings and nothing else:
+
+## What This Code Does
+[1–2 plain-English sentences]
+
+## Overall Risk Rating
+[RATING WORD] — [one plain-English sentence]
+
+## Top 3 Actions for Leadership
+1. [Action one]
+2. [Action two]
+3. [Action three]
+
+TONE: Boardroom-ready. Calm, factual, non-alarmist. No bullet sub-points, no technical
+jargon, no preamble before the first heading. The brief must fit on half a PDF page.
+""".strip()
+
+
+# ── System prompt: Scope Estimate (S/4HANA mode only) ─────────────────────────
+SYSTEM_PROMPT_SCOPE_ESTIMATE = """
+You are an SAP project manager producing a remediation scope estimate for a steering
+committee. You are given the full S/4HANA readiness report. Your task is to produce
+a concise closing section that rolls up the effort across all RED and AMBER findings
+into a single project estimate.
+
+WHAT TO DO:
+1. Extract every "Estimated Effort" value from the RED (Critical Blockers) and AMBER
+   (Warnings Requiring Review) findings. Convert all values to hours if given in
+   different units. Where a range is given (e.g. "4–8 hours"), use the midpoint.
+2. Sum the hours for RED findings and AMBER findings separately.
+3. Convert total hours to developer days using 6 productive hours per day (standard
+   SAP project rate — state this assumption explicitly).
+4. Add a contingency buffer: 30% for projects with more than 5 RED findings,
+   20% otherwise. State the buffer percentage used.
+5. State total developer days (with contingency) as a range: lower = no contingency,
+   upper = with contingency.
+6. Identify the single biggest effort item and flag it separately.
+7. State one key assumption and one key risk to the estimate.
+
+OUTPUT FORMAT — use these exact headings:
+
+## Remediation Scope Estimate
+
+### Effort Breakdown
+| Category | Findings | Raw Hours | Developer Days (6hr/day) |
+[one row for RED, one for AMBER, one total row]
+
+### Total Estimate
+[X] to [Y] developer days (including [Z]% contingency buffer)
+
+### Largest Single Item
+[Finding name] — [effort] — [why it dominates]
+
+### Key Assumptions & Risks
+- Assumes: [one key assumption]
+- Key risk: [one key risk that could increase scope]
+- Complexity note: [one sentence about team familiarity factor]
+
+TONE: Project-manager matter-of-fact. No drama, no caveats beyond what is listed above.
+Do not repeat findings — just reference them by name. This section will appear as the
+final page of the PDF report.
+""".strip()
+
+
+def generate_executive_brief(client, full_analysis: str, mode: str) -> str:
+    """
+    Generate a half-page Executive Brief from the full analysis text.
+    Returns the brief as markdown text ready for PDF rendering.
+    """
+    mode_context = {
+        "single":  "a single ABAP program analysis",
+        "bundle":  "a multi-program SAP code estate analysis",
+        "s4hana":  "an S/4HANA migration readiness assessment",
+    }.get(mode, "an SAP code analysis")
+
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=800,
+        system=SYSTEM_PROMPT_EXECUTIVE_BRIEF,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Please write the Executive Brief for {mode_context}. "
+                "Base it on the full analysis below.\n\n"
+                "=== FULL ANALYSIS ===\n"
+                + full_analysis[:20_000]
+            ),
+        }],
+    )
+    return message.content[0].text
+
+
+def generate_scope_estimate(client, full_analysis: str) -> str:
+    """
+    Generate a Scope Estimate section from an S/4HANA readiness analysis.
+    Returns the section as markdown text ready for PDF rendering.
+    """
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=800,
+        system=SYSTEM_PROMPT_SCOPE_ESTIMATE,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Please produce the Remediation Scope Estimate for the following "
+                "S/4HANA readiness report.\n\n"
+                "=== S/4HANA READINESS REPORT ===\n"
+                + full_analysis[:25_000]
+            ),
+        }],
+    )
+    return message.content[0].text
 
 
 # ── PDF text extraction helper ─────────────────────────────────────────────────
@@ -1099,7 +1246,9 @@ def analyse_single(code_text: str) -> str:
             + warning_lines
         )
 
-    return validated
+    # Pass 4 — executive brief (prepended for PDF renderer)
+    brief = generate_executive_brief(client, validated, "single")
+    return f"__EXECUTIVE_BRIEF__\n{brief}\n__END_BRIEF__\n\n{validated}"
 
 
 
@@ -1258,7 +1407,8 @@ def analyse_bundle(files: list) -> str:
     )
     draft = message.content[0].text
     _, cleaned = _self_review_pass(client, draft, combined[:30_000])
-    return cleaned
+    brief = generate_executive_brief(client, cleaned, "bundle")
+    return f"__EXECUTIVE_BRIEF__\n{brief}\n__END_BRIEF__\n\n{cleaned}"
 
 
 # ── API call: S/4HANA Readiness ────────────────────────────────────────────────
@@ -1295,7 +1445,14 @@ def analyse_s4hana(files: list) -> str:
     )
     draft = message.content[0].text
     _, cleaned = _self_review_pass(client, draft, combined[:30_000])
-    return cleaned
+
+    # Scope estimate — appended before packaging
+    scope = generate_scope_estimate(client, cleaned)
+    full_report = cleaned + "\n\n" + scope
+
+    # Executive brief — prepended for PDF renderer
+    brief = generate_executive_brief(client, full_report, "s4hana")
+    return f"__EXECUTIVE_BRIEF__\n{brief}\n__END_BRIEF__\n\n{full_report}"
 
 
 
@@ -1686,6 +1843,134 @@ class VivrtaRenderer:
                        new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(L.GLOSS_AFTER)
 
+    def executive_brief_box(self, brief_markdown: str) -> None:
+        """
+        Renders the Executive Brief as a styled panel immediately after the
+        metadata box, before the detailed findings.
+
+        Layout:
+          • Dark indigo header bar with "EXECUTIVE BRIEF" label
+          • Light lavender fill body with parsed sections:
+              — "What This Code Does" as body paragraph
+              — "Overall Risk Rating" with coloured rating badge
+              — "Top 3 Actions" as numbered list
+          • Rounded border in brand indigo
+        """
+        L, pdf = self.L, self.pdf
+
+        RISK_COLORS = {
+            "CRITICAL": L.C_BADGE_HIGH,
+            "HIGH":     L.C_BADGE_HIGH,
+            "MEDIUM":   L.C_BADGE_MED,
+            "LOW":      L.C_BADGE_LOW,
+        }
+
+        # ── Parse brief sections ──────────────────────────────────────────────
+        what_text    = ""
+        rating_word  = ""
+        rating_rest  = ""
+        actions      = []
+
+        current = None
+        for raw_line in brief_markdown.split("\n"):
+            line = raw_line.strip()
+            if "## What This Code Does" in line:
+                current = "what"
+            elif "## Overall Risk Rating" in line:
+                current = "rating"
+            elif "## Top 3 Actions" in line:
+                current = "actions"
+            elif not line:
+                continue
+            elif current == "what":
+                what_text += (" " if what_text else "") + _clean_md(line)
+            elif current == "rating":
+                # "HIGH — explanation text"
+                parts = re.split(r"\s*[—–-]+\s*", line, maxsplit=1)
+                rating_word = _clean_md(parts[0]).strip().upper()
+                rating_rest = _clean_md(parts[1]).strip() if len(parts) > 1 else ""
+            elif current == "actions":
+                m = re.match(r"^\d+\.\s+(.*)", line)
+                if m:
+                    actions.append(_clean_md(m.group(1)))
+
+        # ── Section header bar ────────────────────────────────────────────────
+        self._guard(needed_mm=60)
+        bx, by = L.MARGIN_LEFT, pdf.get_y()
+        pdf.set_fill_color(*L.C_BRAND_DARK)
+        pdf.rect(bx, by, L.BODY_W, 7, "F")
+        pdf.set_xy(bx + 4, by + 1)
+        self._font("B", 8, (255, 255, 255))
+        pdf.cell(L.BODY_W - 8, 5, "EXECUTIVE BRIEF  —  Leadership Summary",
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        # ── Light lavender body area ──────────────────────────────────────────
+        body_y = pdf.get_y()
+        # We'll draw the box after content so we know the height — use a scan pass
+        content_start_y = body_y
+
+        pdf.set_fill_color(248, 249, 255)   # very light indigo tint
+        # Placeholder rect — we'll overdraw after measuring; use generous estimate
+        est_h = 52
+        pdf.rect(bx, body_y, L.BODY_W, est_h, "F")
+        pdf.set_draw_color(*L.C_META_BORDER)
+        pdf.set_line_width(0.35)
+        pdf.rect(bx, by, L.BODY_W, est_h + 7)
+
+        inner_x = bx + 5
+        inner_w  = L.BODY_W - 10
+        pdf.set_y(body_y + 4)
+
+        # ── What This Code Does ───────────────────────────────────────────────
+        pdf.set_x(inner_x)
+        self._font("B", 8, L.C_BRAND_INDIGO)
+        pdf.cell(inner_w, 4.5, "What This Code Does",
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(1)
+        pdf.set_x(inner_x)
+        self._font("", 8.5, L.C_TEXT)
+        pdf.multi_cell(inner_w, 4.8, what_text or "—",
+                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+
+        # ── Overall Risk Rating ───────────────────────────────────────────────
+        pdf.set_x(inner_x)
+        self._font("B", 8, L.C_BRAND_INDIGO)
+        pdf.cell(inner_w, 4.5, "Overall Risk Rating",
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(1)
+
+        # Badge + explanation on same line
+        badge_color = RISK_COLORS.get(rating_word, L.C_BRAND_GREY)
+        pdf.set_x(inner_x)
+        bw = pdf.get_string_width(rating_word) + 6
+        pdf.set_fill_color(*badge_color)
+        self._font("B", 8, (255, 255, 255))
+        pdf.cell(bw, 5.5, rating_word, fill=True,
+                 new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.set_x(inner_x + bw + 3)
+        self._font("", 8.5, L.C_TEXT)
+        pdf.multi_cell(inner_w - bw - 3, 5.5, rating_rest,
+                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+
+        # ── Top 3 Actions ─────────────────────────────────────────────────────
+        pdf.set_x(inner_x)
+        self._font("B", 8, L.C_BRAND_INDIGO)
+        pdf.cell(inner_w, 4.5, "Top 3 Actions for Leadership",
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(1)
+        for n, action in enumerate(actions[:3], 1):
+            pdf.set_x(inner_x)
+            self._font("B", 8.5, L.C_BRAND_INDIGO)
+            pdf.cell(6, 5, f"{n}.",
+                     new_x=XPos.RIGHT, new_y=YPos.TOP)
+            self._font("", 8.5, L.C_TEXT)
+            pdf.multi_cell(inner_w - 6, 5, action,
+                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        pdf.ln(4)
+
     def finding_field(self, key: str, value: str) -> None:
         """
         Renders one field of a structured finding block.
@@ -1943,9 +2228,25 @@ def build_pdf(filename: str, analysis: str) -> bytes:
     Renders a complete, standardised Vivrta.AI PDF report.
     Layout is fully controlled by VivrtaLayout — nothing is hard-coded
     in the rendering layer.  Safe to call with any analysis length.
+
+    If analysis contains an __EXECUTIVE_BRIEF__ … __END_BRIEF__ sentinel block
+    (injected by the analyse_* functions), it is extracted, rendered as a styled
+    panel after the metadata box, and stripped from the body text before the
+    detailed findings are rendered.
     """
     L   = VivrtaLayout
     now = datetime.now().strftime("%d %B %Y, %H:%M")
+
+    # ── Extract executive brief sentinel ──────────────────────────────────────
+    brief_text  = None
+    body_text   = analysis
+    brief_match = re.search(
+        r"__EXECUTIVE_BRIEF__\n(.*?)\n__END_BRIEF__\n\n",
+        analysis, re.DOTALL
+    )
+    if brief_match:
+        brief_text = brief_match.group(1).strip()
+        body_text  = analysis[brief_match.end():]
 
     pdf      = VivrtaPDF()
     renderer = VivrtaRenderer(pdf)
@@ -1962,16 +2263,33 @@ def build_pdf(filename: str, analysis: str) -> bytes:
         ("Prepared by",   "Vivrta.AI SAP Code Analyser"),
         ("Disclaimer",    "AI-generated. Verify with a qualified SAP consultant."),
     ])
-    _parse_and_render(renderer, analysis)
+
+    # ── Executive Brief panel (before detailed findings) ─────────────────────
+    if brief_text:
+        renderer.executive_brief_box(brief_text)
+
+    _parse_and_render(renderer, body_text)
 
     return bytes(pdf.output())
 
 
 # ── Plain-text export (kept as backup) ────────────────────────────────────────
 def build_export_text(filename: str, analysis: str) -> str:
-    """Create a plain-text export."""
+    """Create a plain-text export, stripping the brief sentinel and prepending it cleanly."""
     now     = datetime.now().strftime("%d %B %Y, %H:%M")
     divider = "=" * 70
+
+    # Strip brief sentinel — include it as a clean text block at the top
+    brief_block = ""
+    body_text   = analysis
+    brief_match = re.search(
+        r"__EXECUTIVE_BRIEF__\n(.*?)\n__END_BRIEF__\n\n",
+        analysis, re.DOTALL
+    )
+    if brief_match:
+        brief_block = brief_match.group(1).strip() + "\n\n" + ("-" * 70) + "\n\n"
+        body_text   = analysis[brief_match.end():]
+
     return (
         f"{divider}\n"
         f"  VIVRTA SYSTEMS \u2014 SAP CODE ANALYSIS REPORT\n"
@@ -1979,7 +2297,8 @@ def build_export_text(filename: str, analysis: str) -> str:
         f"  File analysed : {filename}\n"
         f"  Generated at  : {now}\n\n"
         f"{divider}\n\n"
-        + analysis
+        + brief_block
+        + body_text
         + f"\n\n{divider}\n"
         f"  Powered by Vivrta.AI \u00b7 vivrta.io\n"
         f"{divider}\n"
@@ -2256,6 +2575,17 @@ if st.session_state["analysis_result"]:
     fname    = st.session_state["analysed_filename"]
     mode     = st.session_state["analysis_mode"] or "single"
 
+    # Extract brief sentinel for on-screen display
+    display_brief = None
+    display_body  = analysis
+    _brief_m = re.search(
+        r"__EXECUTIVE_BRIEF__\n(.*?)\n__END_BRIEF__\n\n",
+        analysis, re.DOTALL
+    )
+    if _brief_m:
+        display_brief = _brief_m.group(1).strip()
+        display_body  = analysis[_brief_m.end():]
+
     mode_icon = {"single": "📋", "bundle": "📦", "s4hana": "🚀"}.get(mode, "📋")
     mode_label = MODES.get(mode, "Analysis Report").split("  ", 1)[-1]
 
@@ -2269,8 +2599,22 @@ if st.session_state["analysis_result"]:
         </div>''',
         unsafe_allow_html=True,
     )
+
+    # Executive Brief callout (on-screen)
+    if display_brief:
+        brief_html = display_brief.replace(chr(10), "<br>")
+        st.markdown(
+            f'<div style="background:#f0f4ff;border-left:4px solid #4f46e5;'
+            f'border-radius:0 8px 8px 0;padding:1rem 1.3rem;margin-bottom:1rem;'
+            f'font-size:0.88rem;color:#1e1b4b;">'
+            f'<strong style="font-size:0.72rem;letter-spacing:0.08em;'
+            f'text-transform:uppercase;color:#6366f1;">Executive Brief</strong><br><br>'
+            f'{brief_html}</div>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown(
-        f'<div class="result-body">{analysis.replace(chr(10), "<br>")}</div>',
+        f'<div class="result-body">{display_body.replace(chr(10), "<br>")}</div>',
         unsafe_allow_html=True,
     )
 
