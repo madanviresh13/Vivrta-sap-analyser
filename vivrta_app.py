@@ -603,10 +603,53 @@ CATEGORY 5 — ARCHITECTURAL PATTERNS
 - RFC calls that won't work in embedded deployment model
 - Batch programs that need review for real-time HANA processing
 
-SCORING — for each finding assign:
-  🔴 RED    — Blocker. Will cause errors or incorrect results in S/4HANA. Must fix before go-live.
-  🟡 AMBER  — Warning. May work but is a risk or best-practice violation. Should fix.
-  🟢 GREEN  — Compatible. Follows S/4HANA best practices. No action needed.
+SCORING — apply these definitions strictly. When in doubt, use AMBER not RED.
+
+  🔴 RED — CONFIRMED BREAKING CHANGE ONLY. Use RED if and only if:
+    (a) The object (table, FM, field, statement) is CONFIRMED removed or replaced in S/4HANA
+        AND you can name the specific replacement or simplification item, OR
+    (b) The code pattern will produce demonstrably WRONG RESULTS in S/4HANA
+        (e.g. ANLB without AFABER causing multi-area aggregation), OR
+    (c) The code will cause a RUNTIME ERROR in S/4HANA (syntax error, missing object).
+    DO NOT use RED for performance issues, best practice violations, or "may cause problems."
+    RED means: "This WILL break or produce wrong results. Do not go live without fixing."
+
+  🟡 AMBER — Warning. Use AMBER for:
+    (a) Performance anti-patterns on HANA (SELECT *, missing field lists, inefficient WHERE)
+    (b) Best practice violations that work but carry risk (hard-coded values, MOVE-CORRESPONDING)
+    (c) Function modules that exist in S/4HANA but SAP recommends replacing
+    (d) Patterns that MIGHT cause issues depending on configuration
+    AMBER means: "This works but should be reviewed and improved."
+
+  🟢 GREEN — Compatible. Follows S/4HANA best practices. No action needed.
+
+VERIFIED DEPRECATED OBJECTS — these are CONFIRMED RED in S/4HANA:
+Tables confirmed removed/replaced:
+  - BSEG: now a compatibility view over ACDOCA — direct writes will fail
+  - GLT0: replaced by ACDOCA universal journal
+  - COEP: replaced by ACDOCA
+  - BSIS/BSAS/BSID/BSAD/BSIK/BSAK: compatibility views only — direct writes fail
+  - PCL1/PCL2/PCL3/PCL4: HR cluster tables — replaced in S/4HANA HCM
+
+Fields confirmed deprecated:
+  - KNKK (credit management fields): replaced by new credit management
+  - BSEG-SGTXT at header level: moved to BKPF
+
+Function modules confirmed deprecated:
+  - SD_SALESDOCUMENT_CREATE: replaced by BAPI_SALESORDER_CREATEFROMDAT2
+  - FI_DOCUMENT_CHANGE: replaced by BAPI_ACC_DOCUMENT_POST
+
+OBJECTS THAT STILL EXIST IN S/4HANA — do NOT flag as RED:
+  - LFA1: still exists, stores vendor-specific BP role data. LOEVM field is still valid.
+    The Business Partner model adds a layer but LFA1 is NOT removed. Flag AMBER if
+    code relies on LFA1 alone without BP consideration, not RED.
+  - VENDOR_READ: exists in S/4HANA compatibility mode. Flag AMBER as SAP recommends
+    CDS/API alternatives, but it will not cause a runtime error.
+  - BAPI_ACC_GL_POSTING_POST: fully supported in S/4HANA. GREEN.
+  - MOVE-CORRESPONDING: valid ABAP statement. Flag AMBER only if structures are known
+    to have changed. Do not flag RED without evidence of structural change.
+  - SELECT *: performance anti-pattern on HANA. Always AMBER, never RED.
+    It will not cause errors — it causes performance degradation.
 
 OUTPUT STRUCTURE — follow exactly:
 
@@ -652,10 +695,13 @@ Note any assumptions (e.g. "assumes experienced ABAP developer familiar with the
 ACCURACY RULES FOR THIS ASSESSMENT:
 - Only flag RED or AMBER if you can quote the specific code construct.
   Include: Evidence: `exact statement or field reference`
-- Never state a SAP Note number unless you are certain it is correct.
-  Write "verify in SAP simplification item catalogue" instead.
+- NEVER state a SAP Simplification Item number (e.g. "Simplification Item 218").
+  These numbers are release-specific and easily confused. Instead write:
+  "verify in the SAP S/4HANA Simplification Item Catalogue for your target release."
+- NEVER state a SAP Note number unless you are 100% certain it is correct.
+  Write "verify in SAP support portal" instead.
 - Never assert a function module "does not exist in S/4HANA" unless it is in
-  the deprecated list above or shows a clearly incompatible pattern.
+  the VERIFIED DEPRECATED list above.
   Mark uncertain FM deprecations AMBER, not RED.
 - For RED findings, state a replacement API only if you are certain.
   If uncertain: "SAP provides a replacement — confirm in the simplification
@@ -664,7 +710,11 @@ ACCURACY RULES FOR THIS ASSESSMENT:
   or "unauthorized access will occur". State the risk, not the outcome.
 - ANLB TIME-DEPENDENCY: Any read of ANLB without AFABER (depreciation area),
   BDATU/ADATU (validity dates), or GJAHR (fiscal year) in the WHERE clause
-  produces incorrect depreciation results. Flag as RED — confirmed S/4HANA risk.
+  produces incorrect depreciation results in S/4HANA parallel valuation.
+  Flag as RED — confirmed S/4HANA risk with demonstrably wrong results.
+- SELECT * is ALWAYS AMBER — never RED. It causes performance issues, not errors.
+- LFA1 and LOEVM are valid in S/4HANA — never flag as RED. Use AMBER if BP
+  model consideration is needed.
 
 TONE: Precise, technical, actionable. This report will be presented to both the
 ABAP development team (who need exact fixes) and the project steering committee
@@ -690,16 +740,30 @@ distil it into exactly three things:
 2. OVERALL RISK RATING — one of: LOW / MEDIUM / HIGH / CRITICAL
    Derive this directly from the findings in the report. State the rating and then
    give one plain-English sentence explaining what it means for the business.
-   Example: "HIGH — the program contains hard-coded financial values and missing access
-   controls that should be reviewed before the next audit cycle."
-   NEVER use the words "SOX", "GDPR", "bypass", or "violation" — frame risk in
-   business terms only.
+   Focus on FINANCIAL and BUSINESS consequences, not technical ones.
+
+   GOOD EXAMPLE: "HIGH — this program currently blends different tax and book
+   depreciation values together. Running it in the new environment will result in
+   corrupted financial postings and inaccurate financial reporting."
+
+   BAD EXAMPLE: "HIGH — the program contains hard-coded GL account values and
+   missing AUTHORITY-CHECK statements." (Too technical — CFO doesn't know what
+   GL accounts or AUTHORITY-CHECK mean.)
+
+   NEVER use the words "SOX", "GDPR", "bypass", "ABAP", "SELECT", "table",
+   "function module", or "violation" — frame everything in business terms only.
 
 3. TOP 3 ACTIONS — the three most important things leadership should ask the IT team
    to do, in plain English, prioritised by business risk. Use simple action verbs:
    "Ask your IT team to...", "Commission a review of...", "Before go-live, confirm that..."
-   Each action must be one sentence. Never reference specific ABAP keywords or table
-   names — translate them to business terms.
+   Each action must be one sentence. Never reference specific ABAP keywords, table
+   names, or technical objects — translate them entirely to business terms.
+
+   GOOD EXAMPLE: "Ask your IT team to confirm this program is not running in
+   production — it will post incorrect depreciation amounts until fixed."
+
+   BAD EXAMPLE: "Ask your IT team to add AFABER to the ANLB SELECT statement."
+   (The CFO has no idea what AFABER or ANLB means.)
 
 OUTPUT FORMAT — use these exact headings and nothing else:
 
@@ -707,15 +771,17 @@ OUTPUT FORMAT — use these exact headings and nothing else:
 [1–2 plain-English sentences]
 
 ## Overall Risk Rating
-[RATING WORD] — [one plain-English sentence]
+[RATING WORD] — [one plain-English sentence in business terms]
 
 ## Top 3 Actions for Leadership
-1. [Action one]
-2. [Action two]
-3. [Action three]
+1. [Action one — plain English, no technical terms]
+2. [Action two — plain English, no technical terms]
+3. [Action three — plain English, no technical terms]
 
 TONE: Boardroom-ready. Calm, factual, non-alarmist. No bullet sub-points, no technical
 jargon, no preamble before the first heading. The brief must fit on half a PDF page.
+If in doubt, ask yourself: "Would a Finance Director with no IT background understand
+every word of this?" If not, rewrite it.
 """.strip()
 
 
