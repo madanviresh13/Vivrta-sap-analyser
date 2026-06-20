@@ -15,7 +15,7 @@ from fpdf.enums import XPos, YPos
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Vivrta.AI | SAP Code Analyser",
+    page_title="Vivrta.IO | SAP Code Analyser",
     page_icon="⬡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1721,7 +1721,7 @@ class VivrtaPDF(FPDF):
         self.set_xy(L.MARGIN_LEFT, L.HEADER_TEXT_Y)
         self.set_font(L.FONT, "B", L.HEADER_FONT_SZ)
         self.set_text_color(255, 255, 255)
-        self.cell(0, L.HEADER_H - 2, "VIVRTA.AI  |  SAP Code Analyser",
+        self.cell(0, L.HEADER_H - 2, "VIVRTA.IO  |  SAP Code Analyser",
                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         # Reset cursor to top of usable body area
         self.set_y(L.HEADER_FIRST_Y)
@@ -1740,7 +1740,7 @@ class VivrtaPDF(FPDF):
         self.set_text_color(*L.C_BRAND_GREY)
         self.cell(
             0, 5,
-            "Vivrta.AI  ·  vivrta.io  ·  "
+            "Vivrta.IO  ·  vivrta.io  ·  "
             "AI-generated analysis. Review with a qualified SAP consultant "
             "before acting on this report.",
             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT,
@@ -2305,7 +2305,7 @@ def _parse_and_render(renderer: VivrtaRenderer, markdown_text: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 def build_pdf(filename: str, analysis: str) -> bytes:
     """
-    Renders a complete, standardised Vivrta.AI PDF report.
+    Renders a complete, standardised Vivrta.IO PDF report.
     Layout is fully controlled by VivrtaLayout — nothing is hard-coded
     in the rendering layer.  Safe to call with any analysis length.
 
@@ -2335,12 +2335,12 @@ def build_pdf(filename: str, analysis: str) -> bytes:
 
     renderer.cover_block(
         title    = "SAP Code Analysis Report",
-        subtitle = "Vivrta.AI  ·  Powered by Claude AI",
+        subtitle = "Vivrta.IO  ·  Powered by Claude AI",
     )
     renderer.metadata_box([
         ("File analysed", filename),
         ("Generated",     now),
-        ("Prepared by",   "Vivrta.AI SAP Code Analyser"),
+        ("Prepared by",   "Vivrta.IO SAP Code Analyser"),
         ("Disclaimer",    "AI-generated. Verify with a qualified SAP consultant."),
     ])
 
@@ -2372,7 +2372,7 @@ def build_export_text(filename: str, analysis: str) -> str:
 
     return (
         f"{divider}\n"
-        f"  VIVRTA SYSTEMS \u2014 SAP CODE ANALYSIS REPORT\n"
+        f"  VIVRTA.IO \u2014 SAP CODE ANALYSIS REPORT\n"
         f"{divider}\n\n"
         f"  File analysed : {filename}\n"
         f"  Generated at  : {now}\n\n"
@@ -2380,7 +2380,7 @@ def build_export_text(filename: str, analysis: str) -> str:
         + brief_block
         + body_text
         + f"\n\n{divider}\n"
-        f"  Powered by Vivrta.AI \u00b7 vivrta.io\n"
+        f"  Powered by Vivrta.IO \u00b7 vivrta.io\n"
         f"{divider}\n"
     )
 
@@ -2438,7 +2438,7 @@ with st.sidebar:
     <hr class="sb-divider"/>
 
     <div class="sb-footer">
-        Powered by Claude AI &nbsp;·&nbsp; © 2026 Vivrta.AI<br>
+        Powered by Claude AI &nbsp;·&nbsp; © 2026 Vivrta.IO<br>
         AI-generated — review with a qualified SAP<br>consultant before any business decision.
     </div>
     """, unsafe_allow_html=True)
@@ -2731,7 +2731,7 @@ if st.session_state["analysis_result"]:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
         '<p style="font-size:0.73rem;color:#9ca3af;">'
-        "Analysis by Vivrta.AI · Review with a qualified SAP consultant before any business decision."
+        "Analysis by Vivrta.IO · Review with a qualified SAP consultant before any business decision."
         '</p>',
         unsafe_allow_html=True,
     )
