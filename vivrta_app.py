@@ -443,6 +443,10 @@ Investigate and apply the above structure to every instance of:
 - Data-mapping mismatches (field type or semantic mismatch)
 - Generic BAPI where a specific one is standard SAP practice
 - Fields parsed/populated but never passed to BAPI structures
+- BAPI_TRANSACTION_COMMIT inside a LOOP — always flag as High severity.
+  This creates one database commit per loop iteration instead of a single batch commit.
+  Risk: partial postings if loop fails mid-way, performance degradation, lock contention.
+  Required fix: move BAPI_TRANSACTION_COMMIT to after the ENDLOOP statement.
 
 Confidence guidance:
   95–99% — directly visible hard-coded value or missing statement; no ambiguity
@@ -602,6 +606,16 @@ CATEGORY 5 — ARCHITECTURAL PATTERNS
 - Screen-based (dynpro) programs that should be Fiori-enabled
 - RFC calls that won't work in embedded deployment model
 - Batch programs that need review for real-time HANA processing
+- BAPI_TRANSACTION_COMMIT inside a LOOP: this is always an AMBER finding.
+  Committing inside a loop creates one database document per loop iteration instead of
+  batching all postings into a single commit. This causes:
+  (a) Performance degradation — each commit is a separate database transaction
+  (b) Data integrity risk — if the loop fails mid-way, some postings are committed and
+      some are not, leaving the ledger in a partially posted state
+  (c) Increased lock contention on financial tables
+  The correct pattern is to collect all BAPI calls inside the loop and call
+  BAPI_TRANSACTION_COMMIT once after the loop completes.
+  Flag as AMBER with Evidence quoting the COMMIT statement inside the LOOP...ENDLOOP block.
 
 SCORING — apply these definitions strictly. When in doubt, use AMBER not RED.
 
