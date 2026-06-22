@@ -12,6 +12,7 @@ import streamlit as st
 from datetime import datetime
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
+from vivrta_knowledge_loader import KNOWLEDGE_BASE, KNOWLEDGE_INJECTION, summarise_knowledge_base
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -859,7 +860,7 @@ def generate_executive_brief(client, full_analysis: str, mode: str) -> str:
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=800,
-        system=SYSTEM_PROMPT_EXECUTIVE_BRIEF,
+        system=KNOWLEDGE_INJECTION + "\n\n" + SYSTEM_PROMPT_EXECUTIVE_BRIEF,
         messages=[{
             "role": "user",
             "content": (
@@ -1298,7 +1299,7 @@ def analyse_single(code_text: str) -> str:
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=4096,
-        system=SYSTEM_PROMPT_SINGLE,
+        system=KNOWLEDGE_INJECTION + "\n\n" + SYSTEM_PROMPT_SINGLE,
         messages=[{
             "role": "user",
             "content": (
@@ -1482,7 +1483,7 @@ def analyse_bundle(files: list) -> str:
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=8192,
-        system=SYSTEM_PROMPT_BUNDLE,
+        system=KNOWLEDGE_INJECTION + "\n\n" + SYSTEM_PROMPT_BUNDLE,
         messages=[{"role": "user", "content": user_content}],
     )
     draft = message.content[0].text
@@ -1520,7 +1521,7 @@ def analyse_s4hana(files: list) -> str:
     message = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=8192,
-        system=SYSTEM_PROMPT_S4HANA,
+        system=KNOWLEDGE_INJECTION + "\n\n" + SYSTEM_PROMPT_S4HANA,
         messages=[{"role": "user", "content": user_content}],
     )
     draft = message.content[0].text
@@ -2436,6 +2437,17 @@ with st.sidebar:
     </div>
 
     <hr class="sb-divider"/>
+
+    <div class="sb-sec">
+        <div class="sb-sec-title">Knowledge base</div>
+        <div class="sb-row">
+            <span class="sb-icon">🧠</span>
+            <div>
+                <strong style="color:#c7d2fe;">{len(KNOWLEDGE_BASE.get('rules', []))} reviewer rules active</strong><br>
+                <span style="font-size:0.67rem; color:#475569;">v{KNOWLEDGE_BASE.get('version','?')} · {KNOWLEDGE_BASE.get('last_updated','unknown')}</span>
+            </div>
+        </div>
+    </div>
 
     <div class="sb-footer">
         Powered by Claude AI &nbsp;·&nbsp; © 2026 Vivrta.IO<br>
