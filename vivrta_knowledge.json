@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-22",
+  "description": "Vivrta.IO SAP Analysis Knowledge Base — reviewer-validated rules injected into every analysis",
+  "rules": [
+    {
+      "id": "RULE-001",
+      "title": "SELECT * Severity Calibration",
+      "criticality": "AMBER",
+      "category": "Performance",
+      "context": "When ABAP code uses SELECT * instead of a named field list on any table.",
+      "gap": "The AI engine sometimes flags SELECT * as RED, treating it as a breaking change in S/4HANA.",
+      "learning": "SELECT * is a performance anti-pattern on HANA column store because it fetches all columns when only a subset are used downstream. However, it does NOT cause a runtime error or a breaking change. It causes performance degradation and increases maintenance complexity. It is always AMBER, never RED.",
+      "remediation_instruction": "Flag as AMBER. State the table name, list which fields are actually used downstream, and calculate how many fields are fetched unnecessarily. Frame as: 'SELECT * increases memory consumption. Only [N] of [total] fields are used downstream — [unused count] fields are fetched unnecessarily per row.' Never escalate to RED for SELECT * alone."
+    },
+    {
+      "id": "RULE-002",
+      "title": "LFA1 and LOEVM Compatibility in S/4HANA",
+      "criticality": "AMBER",
+      "category": "S/4HANA Compatibility",
+      "context": "When ABAP code reads vendor deletion flags via LFA1-LOEVM or queries the LFA1 table directly.",
+      "gap": "The AI engine flags LFA1-LOEVM as deprecated or removed in S/4HANA, which is incorrect. It sometimes marks this as RED.",
+      "learning": "In S/4HANA, LFA1 still exists and stores vendor-specific Business Partner role data. LOEVM is still a valid field. The Business Partner (BP) model adds a layer on top but does NOT remove LFA1 or LOEVM. Direct reads on LFA1-LOEVM will not cause a runtime error. The risk is incomplete data if the BP model is not considered, but this is an AMBER concern not a RED blocker. The migration path involves checking Business Partner status using MDG APIs or CVI (Customer-Vendor Integration) structures, but the existing code will not break on go-live.",
+      "remediation_instruction": "Flag as AMBER, not RED. State: 'LFA1 and the LOEVM field remain valid in S/4HANA. However, the Business Partner model may not fully synchronise deletion flags to LFA1 in all configurations. Recommend validating against BP status using MDG APIs or CVI structures as a medium-priority remediation after go-live.' Never flag LFA1 or LOEVM as a confirmed breaking change."
+    },
+    {
+      "id": "RULE-003",
+      "title": "ANLB Table — Missing AFABER Filter",
+      "criticality": "RED",
+      "category": "Financial Accuracy",
+      "context": "When a SELECT query reads the ANLB table (Asset Accounting depreciation terms) without filtering by AFABER (Depreciation Area key).",
+      "gap": "The AI engine often misses the absence of an AFABER filter and does not flag the financial consequence clearly enough.",
+      "learning": "ANLB stores depreciation parameters per asset per depreciation area. Without an AFABER filter in the WHERE clause, the query returns rows for ALL depreciation areas simultaneously — typically Book Depreciation (01), Tax Depreciation (15), Local GAAP (30), and others depending on configuration. Summing or processing these rows without the filter causes massive financial duplication: depreciation values from Book, Tax, and Local reporting areas are combined, producing completely incorrect figures that will be posted to the general ledger. This is a confirmed financial accuracy risk — a RED finding.",
+      "remediation_instruction": "Flag as RED. State: 'The SELECT on ANLB does not filter by AFABER (Depreciation Area). Without this filter, the query returns depreciation parameters for all configured valuation areas simultaneously. In a parallel valuation environment, this will sum Book, Tax, and Local GAAP depreciation values together, producing materially incorrect depreciation postings. Required fix: add AND afaber = 01 (or the appropriate area code for the business use case) to the WHERE clause. Verify the correct AFABER value in transaction OABC.' Also check for missing BDATU (validity date) and GJAHR (fiscal year) filters and flag those as additional AMBER findings if absent."
+    },
+    {
+      "id": "RULE-004",
+      "title": "BAPI_TRANSACTION_COMMIT Inside a LOOP",
+      "criticality": "AMBER",
+      "category": "Data Integrity / Performance",
+      "context": "When BAPI_TRANSACTION_COMMIT is called inside a LOOP...ENDLOOP block rather than after the loop completes.",
+      "gap": "The AI engine sometimes misses this pattern or rates it inconsistently. Severity should be AMBER in most cases, escalating to RED if financial postings are involved.",
+      "learning": "Calling BAPI_TRANSACTION_COMMIT inside a LOOP creates one database commit per iteration instead of a single batch commit after all BAPI calls complete. This causes three problems: (1) Performance degradation — each commit is a separate database transaction with its own lock acquisition and release cycle. (2) Data integrity risk — if the loop fails mid-way, earlier iterations are permanently committed while later ones are not, leaving the system in a partially posted state. This is particularly serious for financial documents. (3) Increased lock contention on financial tables. The correct pattern is to collect all BAPI return structures inside the loop and call BAPI_TRANSACTION_COMMIT once after ENDLOOP.",
+      "remediation_instruction": "Flag as AMBER (escalate to RED if the loop is posting financial documents to BKPF/BSEG). Evidence: quote the BAPI_TRANSACTION_COMMIT statement and the enclosing LOOP/ENDLOOP. State: 'BAPI_TRANSACTION_COMMIT is called inside a LOOP, creating one database commit per iteration. If the loop fails mid-way, earlier postings are permanently committed and later ones are not — leaving the system in a partially posted state. Required fix: move BAPI_TRANSACTION_COMMIT to after the ENDLOOP statement and collect all BAPI return messages inside the loop for consolidated error handling.'"
+    },
+    {
+      "id": "RULE-005",
+      "title": "No SAP Simplification Item Numbers",
+      "criticality": "PROCESS",
+      "category": "Accuracy / Hallucination Prevention",
+      "context": "When referencing S/4HANA simplification items or migration notes in any analysis.",
+      "gap": "The AI engine sometimes invents specific Simplification Item numbers (e.g. 'Simplification Item 218') which are release-specific and frequently incorrect, damaging client credibility.",
+      "learning": "SAP Simplification Item numbers vary by S/4HANA release. A number that is correct for S/4HANA 2021 may be wrong for S/4HANA 2023. Stating an incorrect item number in a client report is a professional credibility risk. The correct approach is to reference the concept and direct the client to verify in their specific release catalogue.",
+      "remediation_instruction": "Never state a specific Simplification Item number. Always write: 'verify in the SAP S/4HANA Simplification Item Catalogue for your target release.' Similarly, never state a specific SAP Note number unless it appears verbatim in the uploaded code. Write 'verify in SAP Support Portal' instead."
+    },
+    {
+      "id": "RULE-006",
+      "title": "Executive Brief Language Standard",
+      "criticality": "PROCESS",
+      "category": "Output Quality",
+      "context": "When generating the Executive Brief section for any analysis mode.",
+      "gap": "The AI engine sometimes uses technical SAP terminology in the Executive Brief, making it unreadable for a CFO or Finance Director audience.",
+      "learning": "The Executive Brief is read by Finance Directors, CFOs, and CIOs who have no SAP or coding background. Every technical term must be translated to business consequences. The brief must pass what we call the 'CFO test': if a Finance Director with no IT background cannot understand every sentence without Googling, rewrite it.",
+      "remediation_instruction": "Executive Brief rules: (1) Never use ABAP, BAPI, RFC, FM, SELECT, AUTHORITY-CHECK, or any technical acronym without immediately explaining it in plain English brackets. (2) Never mention table names — translate to business consequences. (3) Risk rating must state a business outcome, not a technical finding. GOOD: 'HIGH — this program blends book and tax depreciation values together, which will produce incorrect financial postings in the new system.' BAD: 'HIGH — SELECT * on ANLB without AFABER filter.' (4) The three leadership actions must use plain business language: 'Ask your IT team to...' or 'Before go-live, confirm that...' — never reference ABAP constructs."
+    },
+    {
+      "id": "RULE-007",
+      "title": "Overall Risk Rating Calibration",
+      "criticality": "PROCESS",
+      "category": "Severity Calibration",
+      "context": "When determining the overall risk rating for any analysis report.",
+      "gap": "The AI engine sometimes rates reports as CRITICAL when the evidence only supports HIGH.",
+      "learning": "CRITICAL is reserved exclusively for: direct manipulation of financial posting tables (INSERT/UPDATE to BKPF/BSEG), financial data modification bypassing SAP standard posting logic, unrestricted RFC execution callable without authentication, proven segregation-of-duties bypass where one user can initiate and approve the same transaction, SQL injection via dynamic WHERE clause with unvalidated user input, or privilege escalation within the code itself. Multiple HIGH findings do not add up to CRITICAL. If none of the CRITICAL criteria are directly evidenced in the code, the maximum overall rating is HIGH.",
+      "remediation_instruction": "Apply the CRITICAL criteria strictly. When in doubt, rate HIGH and add: 'Escalate to CRITICAL if investigation confirms [specific condition].' Never rate CRITICAL based on what the code could theoretically do — only on what the code demonstrably does based on visible statements."
+    }
+  ]
+}
